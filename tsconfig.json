@@ -1,0 +1,23 @@
+{
+  "files": [],
+  "references": [
+    {
+      "path": "packages/shared"
+    },
+    {
+      "path": "packages/artifact"
+    },
+    {
+      "path": "packages/workspace"
+    },
+    {
+      "path": "packages/workflow"
+    },
+    {
+      "path": "packages/agent"
+    },
+    {
+      "path": "apps/desktop"
+    }
+  ]
+}

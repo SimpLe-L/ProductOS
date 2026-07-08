@@ -1,0 +1,23 @@
+{
+  "name": "productos",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b",
+    "test": "tsc -b && vitest run",
+    "desktop:dev": "/opt/homebrew/bin/pnpm --filter @productos/desktop dev",
+    "desktop:build": "/opt/homebrew/bin/pnpm --filter @productos/desktop build",
+    "desktop:start": "/opt/homebrew/bin/pnpm --filter @productos/desktop start",
+    "desktop:open": "/opt/homebrew/bin/pnpm desktop:build && /opt/homebrew/bin/pnpm desktop:start"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.10",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
+  },
+  "dependencies": {
+    "zod": "^3.25.76"
+  }
+}

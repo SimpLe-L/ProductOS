@@ -1,0 +1,21 @@
+node_modules
+.cache/
+dist/
+apps/*/dist/
+packages/*/dist/
+packages/*/*.tsbuildinfo
+.pnpm-store/
+
+# Local secrets and runtime state
+.env
+
+# OS/editor noise
+.DS_Store
+
+OpenAlice
+
+ARCHITECTURE.md
+PROCESS.md
+PRODUCT.md
+WORKSPACE.md
+DEVELOPMENT_STATUS.md
