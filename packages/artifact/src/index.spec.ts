@@ -11,10 +11,11 @@ describe("artifact mapping", () => {
     expect(artifactFileName("PRD")).toBe("prd.md");
     expect(artifactFileName("TASKS")).toBe("tasks.md");
     expect(artifactFileName("TECH_DESIGN")).toBe("tech-design.md");
+    expect(artifactFileName("IMPLEMENTATION")).toBe("implementation.md");
+    expect(artifactFileName("EXECUTION")).toBe("execution.md");
   });
 
   it("rejects unknown artifact types", () => {
     expect(() => parseArtifactType("CHAT")).toThrow();
   });
 });
-

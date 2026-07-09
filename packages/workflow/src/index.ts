@@ -16,6 +16,8 @@ export const workflowStates = [
   "PRD",
   "TASKS",
   "TECH_DESIGN",
+  "IMPLEMENTATION",
+  "EXECUTION",
 ] as const satisfies readonly ArtifactType[];
 
 export type WorkflowState = (typeof workflowStates)[number];
@@ -103,4 +105,3 @@ function uniqueStates(states: readonly ArtifactType[]): WorkflowState[] {
 
   return workflowStates.filter((state) => seen.has(state));
 }
-

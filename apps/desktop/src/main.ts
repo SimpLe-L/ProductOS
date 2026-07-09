@@ -2,7 +2,10 @@ import { app, BrowserWindow, ipcMain } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  type DesktopAgentRunEvent,
   type CreateWorkspaceRequest,
+  type DesktopProviderConfig,
+  type DesktopVerificationConfig,
   type MvpArtifactType,
   type RunAgentRequest,
 } from "./shared.js";
@@ -50,6 +53,7 @@ async function createWindow(): Promise<void> {
 app.whenReady().then(async () => {
   desktopService = new DesktopService({
     workspaceBaseDir: path.join(app.getPath("userData"), "workspaces"),
+    onRunEvent: broadcastAgentRunEvent,
   });
   registerIpc();
   await createWindow();
@@ -82,7 +86,33 @@ function registerIpc(): void {
     desktopService.saveArtifact(input.type, input.content),
   );
 
+  ipcMain.handle("provider:get", () => desktopService.getProviderConfig());
+
+  ipcMain.handle("provider:set", (_event, input: DesktopProviderConfig) =>
+    desktopService.setProviderConfig(input),
+  );
+
+  ipcMain.handle("provider:health", () => desktopService.checkProviderHealth());
+
+  ipcMain.handle("verification:get", () => desktopService.getVerificationConfig());
+
+  ipcMain.handle("verification:set", (_event, input: DesktopVerificationConfig) =>
+    desktopService.setVerificationConfig(input),
+  );
+
+  ipcMain.handle("run:read", (_event, fileName: string) => desktopService.readRun(fileName));
+
+  ipcMain.handle("log:read", (_event, fileName: string) => desktopService.readLog(fileName));
+
   ipcMain.handle("agent:run", (_event, input: RunAgentRequest) => desktopService.runAgent(input));
 
+  ipcMain.handle("agent:run-planning", () => desktopService.runPlanning());
+
   ipcMain.handle("agent:run-chain", () => desktopService.runMvpChain());
+}
+
+function broadcastAgentRunEvent(event: DesktopAgentRunEvent): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    window.webContents.send("agent:stream", event);
+  }
 }

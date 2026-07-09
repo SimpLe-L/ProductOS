@@ -60,11 +60,20 @@ describe("FileWorkflowEngine", () => {
     });
 
     await workflowEngine.save(workspace.ref, {
-      currentState: "TECH_DESIGN",
-      completedStates: ["IDEA", "RESEARCH", "COMPETITORS", "VISION", "ROADMAP", "PRD", "TASKS"],
+      currentState: "EXECUTION",
+      completedStates: [
+        "IDEA",
+        "RESEARCH",
+        "COMPETITORS",
+        "VISION",
+        "ROADMAP",
+        "PRD",
+        "TASKS",
+        "TECH_DESIGN",
+        "IMPLEMENTATION",
+      ],
     });
 
     await expect(workflowEngine.advance(workspace.ref)).rejects.toThrow("terminal state");
   });
 });
-

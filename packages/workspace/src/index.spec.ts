@@ -28,6 +28,7 @@ describe("FileWorkspaceEngine", () => {
     expect(idea.content).toContain("AI interview platform");
 
     await expect(readFile(path.join(loaded.ref.rootPath, "knowledge", "product.md"), "utf8")).resolves.toContain("Product");
+    await expect(readFile(path.join(loaded.ref.rootPath, ".meta", "verification.json"), "utf8")).resolves.toContain("commands");
     await expect(readFile(path.join(loaded.ref.rootPath, "runs", ".keep"), "utf8")).rejects.toThrow();
   });
 
@@ -93,5 +94,39 @@ describe("FileWorkspaceEngine", () => {
 
     await expect(readFile(runPath, "utf8")).resolves.toContain("# Research Run");
     expect(path.basename(runPath)).toContain("research-agent");
+  });
+
+  it("persists verification commands in workspace metadata", async () => {
+    const baseDir = await mkdtemp(path.join(os.tmpdir(), "productos-workspace-"));
+    const engine = new FileWorkspaceEngine(baseDir);
+    const workspace = await engine.createWorkspace({
+      baseDir,
+      name: "Verification Product",
+    });
+
+    await expect(engine.readVerification(workspace.ref)).resolves.toEqual({
+      commands: [],
+    });
+
+    await engine.writeVerification(workspace.ref, {
+      commands: [
+        {
+          name: "Typecheck",
+          command: "pnpm",
+          args: ["typecheck"],
+        },
+      ],
+    });
+
+    const nextEngine = new FileWorkspaceEngine(baseDir);
+    await expect(nextEngine.readVerification(workspace.ref)).resolves.toEqual({
+      commands: [
+        {
+          name: "Typecheck",
+          command: "pnpm",
+          args: ["typecheck"],
+        },
+      ],
+    });
   });
 });

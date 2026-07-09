@@ -9,9 +9,11 @@ import { nowIso, slugifyProjectId } from "@productos/shared";
 import {
   type HistoryEvent,
   type ProjectMetadata,
+  type VerificationMetadata,
   type WorkflowMetadata,
   historyMetadataSchema,
   projectMetadataSchema,
+  verificationMetadataSchema,
   workflowMetadataSchema,
 } from "./schemas.js";
 
@@ -62,6 +64,8 @@ export interface WorkspaceEngine {
   writeArtifact(input: WriteArtifactInput): Promise<void>;
   deleteArtifact(workspace: WorkspaceRef, type: ArtifactType): Promise<void>;
   writeRunRecord(input: WriteRunRecordInput): Promise<string>;
+  readVerification(workspace: WorkspaceRef): Promise<VerificationMetadata>;
+  writeVerification(workspace: WorkspaceRef, verification: VerificationMetadata): Promise<void>;
 }
 
 export class FileWorkspaceEngine implements WorkspaceEngine {
@@ -99,6 +103,7 @@ export class FileWorkspaceEngine implements WorkspaceEngine {
     await writeJson(projectPath(rootPath), project);
     await writeJson(workflowPath(rootPath), workflow);
     await writeJson(historyPath(rootPath), history);
+    await writeJson(verificationPath(rootPath), { commands: [] });
     await writeIfMissing(path.join(rootPath, "knowledge", "product.md"), "# Product\n");
     await writeIfMissing(path.join(rootPath, "knowledge", "decisions.md"), "# Decisions\n");
     await writeIfMissing(path.join(rootPath, "knowledge", "glossary.md"), "# Glossary\n");
@@ -177,6 +182,23 @@ export class FileWorkspaceEngine implements WorkspaceEngine {
     return filePath;
   }
 
+  async readVerification(workspace: WorkspaceRef): Promise<VerificationMetadata> {
+    try {
+      return verificationMetadataSchema.parse(
+        JSON.parse(await readFile(verificationPath(workspace.rootPath), "utf8")),
+      );
+    } catch {
+      const verification: VerificationMetadata = { commands: [] };
+      await this.writeVerification(workspace, verification);
+      return verification;
+    }
+  }
+
+  async writeVerification(workspace: WorkspaceRef, verification: VerificationMetadata): Promise<void> {
+    await mkdir(metaDir(workspace.rootPath), { recursive: true });
+    await writeJson(verificationPath(workspace.rootPath), verificationMetadataSchema.parse(verification));
+  }
+
   private async resolveWorkspacePath(idOrPath: string): Promise<string> {
     if (path.isAbsolute(idOrPath) || idOrPath.includes(path.sep)) {
       return path.resolve(idOrPath);
@@ -208,6 +230,10 @@ function workflowPath(rootPath: string): string {
 
 function historyPath(rootPath: string): string {
   return path.join(metaDir(rootPath), "history.json");
+}
+
+function verificationPath(rootPath: string): string {
+  return path.join(metaDir(rootPath), "verification.json");
 }
 
 async function writeJson(filePath: string, value: unknown): Promise<void> {

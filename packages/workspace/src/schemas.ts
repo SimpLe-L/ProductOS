@@ -27,3 +27,15 @@ export const historyMetadataSchema = z.array(historyEventSchema);
 
 export type HistoryEvent = z.infer<typeof historyEventSchema>;
 
+export const verificationCommandSchema = z.object({
+  name: z.string().min(1),
+  command: z.string().min(1),
+  args: z.array(z.string()).default([]),
+});
+
+export const verificationMetadataSchema = z.object({
+  commands: z.array(verificationCommandSchema).default([]),
+});
+
+export type VerificationCommand = z.infer<typeof verificationCommandSchema>;
+export type VerificationMetadata = z.infer<typeof verificationMetadataSchema>;

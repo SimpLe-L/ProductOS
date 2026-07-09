@@ -8,6 +8,9 @@ export const mvpArtifactTypes = [
   "ROADMAP",
   "PRD",
   "TASKS",
+  "TECH_DESIGN",
+  "IMPLEMENTATION",
+  "EXECUTION",
 ] as const satisfies readonly ArtifactType[];
 
 export type MvpArtifactType = (typeof mvpArtifactTypes)[number];
@@ -38,9 +41,54 @@ export interface DesktopRunSummary {
   updatedAt: string;
 }
 
+export interface DesktopRunDetail extends DesktopRunSummary {
+  content: string;
+}
+
 export interface DesktopLogSummary {
   fileName: string;
+  title: string;
   updatedAt: string;
+}
+
+export interface DesktopLogDetail extends DesktopLogSummary {
+  content: string;
+}
+
+export type DesktopProviderKind = "mock" | "codex" | "claude-code" | "gemini-cli" | "opencode";
+
+export interface DesktopProviderConfig {
+  provider: DesktopProviderKind;
+  command: string;
+  args: string[];
+  timeoutMs: number;
+}
+
+export interface DesktopProviderHealth {
+  provider: DesktopProviderKind;
+  ok: boolean;
+  command: string;
+  message: string;
+  details: string;
+  checkedAt: string;
+}
+
+export interface DesktopVerificationCommand {
+  name: string;
+  command: string;
+  args: string[];
+}
+
+export interface DesktopVerificationConfig {
+  commands: DesktopVerificationCommand[];
+}
+
+export interface DesktopAgentRunEvent {
+  agentName: string;
+  providerName: string;
+  stream: "stdout" | "stderr";
+  content: string;
+  timestamp: string;
 }
 
 export interface CreateWorkspaceRequest {
@@ -50,12 +98,16 @@ export interface CreateWorkspaceRequest {
 }
 
 export type RunAgentRequest =
+  | { agent: "planning" }
   | { agent: "research" }
   | { agent: "competitor" }
   | { agent: "vision" }
   | { agent: "roadmap" }
   | { agent: "prd" }
-  | { agent: "task" };
+  | { agent: "task" }
+  | { agent: "tech-design" }
+  | { agent: "implementation" }
+  | { agent: "execution" };
 
 export interface DesktopApi {
   listWorkspaces(): Promise<DesktopWorkspaceListItem[]>;
@@ -63,6 +115,15 @@ export interface DesktopApi {
   loadWorkspace(): Promise<DesktopWorkspaceSummary | null>;
   createWorkspace(input: CreateWorkspaceRequest): Promise<DesktopWorkspaceSummary>;
   saveArtifact(type: MvpArtifactType, content: string): Promise<DesktopWorkspaceSummary>;
+  getProviderConfig(): Promise<DesktopProviderConfig>;
+  setProviderConfig(config: DesktopProviderConfig): Promise<DesktopProviderConfig>;
+  checkProviderHealth(): Promise<DesktopProviderHealth>;
+  getVerificationConfig(): Promise<DesktopVerificationConfig>;
+  setVerificationConfig(config: DesktopVerificationConfig): Promise<DesktopVerificationConfig>;
+  readRun(fileName: string): Promise<DesktopRunDetail>;
+  readLog(fileName: string): Promise<DesktopLogDetail>;
   runAgent(input: RunAgentRequest): Promise<DesktopWorkspaceSummary>;
+  runPlanning(): Promise<DesktopWorkspaceSummary>;
   runMvpChain(): Promise<DesktopWorkspaceSummary>;
+  onAgentRunEvent(listener: (event: DesktopAgentRunEvent) => void): () => void;
 }

@@ -9,6 +9,8 @@ export const artifactTypes = [
   "PRD",
   "TASKS",
   "TECH_DESIGN",
+  "IMPLEMENTATION",
+  "EXECUTION",
 ] as const;
 
 export const artifactTypeSchema = z.enum(artifactTypes);
@@ -30,6 +32,8 @@ export const artifactFileByType: Record<ArtifactType, string> = {
   PRD: "prd.md",
   TASKS: "tasks.md",
   TECH_DESIGN: "tech-design.md",
+  IMPLEMENTATION: "implementation.md",
+  EXECUTION: "execution.md",
 };
 
 export function artifactFileName(type: ArtifactType): string {
@@ -39,4 +43,3 @@ export function artifactFileName(type: ArtifactType): string {
 export function parseArtifactType(type: string): ArtifactType {
   return artifactTypeSchema.parse(type);
 }
-

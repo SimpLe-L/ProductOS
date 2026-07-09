@@ -25,8 +25,18 @@ export class NativeCliAgentProvider implements AgentProvider {
     const output = await runCommand({
       command: this.command,
       args: this.args,
+      cwd: input.workspace.rootPath,
       stdin: input.prompt,
       timeoutMs: this.timeoutMs,
+      onStream: (stream, content) => {
+        input.onEvent?.({
+          agentName: input.agentName,
+          providerName: this.name,
+          stream,
+          content,
+          timestamp: new Date().toISOString(),
+        });
+      },
     });
 
     return {
@@ -36,7 +46,7 @@ export class NativeCliAgentProvider implements AgentProvider {
   }
 }
 
-export function createCodexCliProvider(command = "codex", args = ["exec", "-"]): NativeCliAgentProvider {
+export function createCodexCliProvider(command = "codex", args = ["exec", "--skip-git-repo-check", "-"]): NativeCliAgentProvider {
   return new NativeCliAgentProvider({
     name: "codex",
     command,
@@ -71,8 +81,10 @@ export function createOpenCodeProvider(command = "opencode", args = ["run"]): Na
 interface RunCommandInput {
   command: string;
   args: string[];
+  cwd: string;
   stdin: string;
   timeoutMs: number;
+  onStream?: (stream: "stdout" | "stderr", content: string) => void;
 }
 
 interface RunCommandOutput {
@@ -83,6 +95,7 @@ interface RunCommandOutput {
 function runCommand(input: RunCommandInput): Promise<RunCommandOutput> {
   return new Promise((resolve, reject) => {
     const child = spawn(input.command, input.args, {
+      cwd: input.cwd,
       stdio: ["pipe", "pipe", "pipe"],
     });
     const stdout: Buffer[] = [];
@@ -92,8 +105,14 @@ function runCommand(input: RunCommandInput): Promise<RunCommandOutput> {
       reject(new Error(`Agent provider timed out after ${input.timeoutMs}ms: ${input.command}`));
     }, input.timeoutMs);
 
-    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
-    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout.push(chunk);
+      input.onStream?.("stdout", chunk.toString("utf8"));
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr.push(chunk);
+      input.onStream?.("stderr", chunk.toString("utf8"));
+    });
     child.on("error", (error) => {
       clearTimeout(timeout);
       reject(error);
@@ -116,4 +135,3 @@ function runCommand(input: RunCommandInput): Promise<RunCommandOutput> {
     child.stdin.end(input.stdin);
   });
 }
-

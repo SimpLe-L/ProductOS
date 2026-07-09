@@ -2,7 +2,7 @@ import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { MockAgentProvider } from "@productos/agent";
+import { MockAgentProvider, NativeCliAgentProvider } from "@productos/agent";
 import { DesktopService } from "./desktop-service.js";
 
 describe("DesktopService", () => {
@@ -55,7 +55,7 @@ describe("DesktopService", () => {
     expect(opened.artifacts.IDEA).toBe("First idea\n");
   });
 
-  it("runs the full MVP chain from the desktop service", async () => {
+  it("runs the full artifact chain from the desktop service", async () => {
     const workspaceBaseDir = await mkdtemp(path.join(os.tmpdir(), "productos-desktop-"));
     const service = new DesktopService({
       workspaceBaseDir,
@@ -66,6 +66,9 @@ describe("DesktopService", () => {
         "Roadmap Agent": "# Roadmap\n\nDesktop roadmap.",
         "PRD Agent": "# PRD\n\nDesktop PRD.",
         "Task Agent": "# Tasks\n\n- Desktop task.",
+        "Tech Design Agent": "# Tech Design\n\nDesktop architecture.",
+        "Implementation Agent": "# Implementation\n\nDesktop coding handoff.",
+        "Code Execution Agent": "# Execution\n\nDesktop execution report.",
       }),
     });
 
@@ -81,8 +84,90 @@ describe("DesktopService", () => {
     expect(completed.artifacts.ROADMAP).toContain("Desktop roadmap.");
     expect(completed.artifacts.PRD).toContain("Desktop PRD.");
     expect(completed.artifacts.TASKS).toContain("Desktop task.");
-    expect(completed.runs).toHaveLength(6);
-    expect(completed.completedStates).toEqual(["RESEARCH", "COMPETITORS", "VISION", "ROADMAP", "PRD", "TASKS"]);
+    expect(completed.artifacts.TECH_DESIGN).toContain("Desktop architecture.");
+    expect(completed.artifacts.IMPLEMENTATION).toContain("Desktop coding handoff.");
+    expect(completed.artifacts.EXECUTION).toContain("Desktop execution report.");
+    expect(completed.runs).toHaveLength(9);
+    expect(completed.completedStates).toEqual([
+      "RESEARCH",
+      "COMPETITORS",
+      "VISION",
+      "ROADMAP",
+      "PRD",
+      "TASKS",
+      "TECH_DESIGN",
+      "IMPLEMENTATION",
+      "EXECUTION",
+    ]);
+
+    const runDetail = await service.readRun(completed.runs[0]!.fileName);
+    expect(runDetail.content).toContain("## Files Updated");
+    expect(runDetail.title).toContain("Run");
+    await expect(service.readRun("../history.json")).rejects.toThrow("Invalid run file name");
+  });
+
+  it("runs the default planning pass as one workspace task", async () => {
+    const workspaceBaseDir = await mkdtemp(path.join(os.tmpdir(), "productos-desktop-"));
+    const service = new DesktopService({
+      workspaceBaseDir,
+      provider: new MockAgentProvider(),
+    });
+
+    await service.createWorkspace({
+      name: "AI Interview Platform",
+      idea: "我想做一个 AI 面试平台",
+    });
+    const completed = await service.runPlanning();
+
+    expect(completed.artifacts.RESEARCH).toContain("Generated from IDEA");
+    expect(completed.artifacts.COMPETITORS).toContain("Generated from IDEA");
+    expect(completed.artifacts.VISION).toContain("Generated from RESEARCH, COMPETITORS");
+    expect(completed.artifacts.ROADMAP).toContain("Generated from VISION");
+    expect(completed.artifacts.PRD).toContain("Generated from VISION, ROADMAP");
+    expect(completed.artifacts.TASKS).toContain("Generated from PRD");
+    expect(completed.runs).toHaveLength(1);
+    expect(completed.runs[0]?.title).toBe("Planning Agent Run");
+    expect(completed.completedStates).toEqual([
+      "RESEARCH",
+      "COMPETITORS",
+      "VISION",
+      "ROADMAP",
+      "PRD",
+      "TASKS",
+    ]);
+  });
+
+  it("surfaces planning parse recovery artifacts, runs, and logs", async () => {
+    const workspaceBaseDir = await mkdtemp(path.join(os.tmpdir(), "productos-desktop-"));
+    const service = new DesktopService({
+      workspaceBaseDir,
+      provider: new MockAgentProvider({
+        "Planning Agent": "<!-- OPENFOUNDER:BEGIN research.md -->\n# Research\n\nRecovered.\n<!-- OPENFOUNDER:END research.md -->",
+      }),
+    });
+
+    await service.createWorkspace({
+      name: "Planning Recovery",
+      idea: "Recover partial planning output",
+    });
+
+    await expect(service.runPlanning()).rejects.toThrow("competitors.md");
+
+    const opened = await service.openWorkspace("planning-recovery");
+    expect(opened.artifacts.RESEARCH).toContain("Recovered.");
+    expect(opened.artifacts.COMPETITORS).toBe("");
+    expect(opened.runs[0]?.title).toBe("Planning Agent Failed Run");
+    expect(opened.logs.map((log) => log.title).sort()).toEqual([
+      "Planning Agent failed",
+      "Planning Raw Output",
+    ]);
+
+    const failedRun = await service.readRun(opened.runs[0]!.fileName);
+    expect(failedRun.content).toContain("Planning Parse Failed");
+    expect(failedRun.content).toContain("research.md");
+    expect(failedRun.content).toContain("competitors.md");
+    expect(failedRun.content).toContain("logs/");
+    expect(failedRun.content).not.toContain(workspaceBaseDir);
   });
 
   it("returns null before a workspace exists", async () => {
@@ -90,5 +175,210 @@ describe("DesktopService", () => {
     const service = new DesktopService({ workspaceBaseDir });
 
     await expect(service.loadWorkspace()).resolves.toBeNull();
+  });
+
+  it("stores provider config and can switch back to mock for local trial runs", async () => {
+    const workspaceBaseDir = await mkdtemp(path.join(os.tmpdir(), "productos-desktop-"));
+    const service = new DesktopService({ workspaceBaseDir });
+
+    await expect(service.getProviderConfig()).resolves.toEqual({
+      provider: "mock",
+      command: "",
+      args: [],
+      timeoutMs: 120_000,
+    });
+
+    const codexConfig = await service.setProviderConfig({
+      provider: "codex",
+      command: "codex",
+      args: ["exec", "--skip-git-repo-check", "-"],
+      timeoutMs: 180_000,
+    });
+    expect(codexConfig).toEqual({
+      provider: "codex",
+      command: "codex",
+      args: ["exec", "--skip-git-repo-check", "-"],
+      timeoutMs: 180_000,
+    });
+
+    const nextSession = new DesktopService({ workspaceBaseDir });
+    await expect(nextSession.getProviderConfig()).resolves.toEqual(codexConfig);
+
+    await service.setProviderConfig({
+      provider: "mock",
+      command: "",
+      args: [],
+      timeoutMs: 120_000,
+    });
+    await service.createWorkspace({
+      name: "Trial Provider Switch",
+      idea: "Try local agent providers",
+    });
+    const completed = await service.runAgent({ agent: "research" });
+
+    expect(completed.artifacts.RESEARCH).toContain("Generated from IDEA");
+    expect(completed.runs[0]?.title).toBe("Research Agent Run");
+  });
+
+  it("stores verification config and appends verification results to execution output", async () => {
+    const workspaceBaseDir = await mkdtemp(path.join(os.tmpdir(), "productos-desktop-"));
+    const service = new DesktopService({
+      workspaceBaseDir,
+      provider: new MockAgentProvider({
+        "Code Execution Agent": "# Execution\n\nDone.",
+      }),
+    });
+
+    await service.createWorkspace({
+      name: "Verification Execution",
+      idea: "Verify execution output",
+    });
+    await service.saveArtifact("IMPLEMENTATION", "# Implementation\n\nRun verification.");
+    await service.setVerificationConfig({
+      commands: [
+        {
+          name: "Print OK",
+          command: process.execPath,
+          args: ["-e", "process.stdout.write('ok')"],
+        },
+      ],
+    });
+
+    await expect(service.getVerificationConfig()).resolves.toEqual({
+      commands: [
+        {
+          name: "Print OK",
+          command: process.execPath,
+          args: ["-e", "process.stdout.write('ok')"],
+        },
+      ],
+    });
+
+    const completed = await service.runAgent({ agent: "execution" });
+    expect(completed.artifacts.EXECUTION).toContain("## Verification Results");
+    expect(completed.artifacts.EXECUTION).toContain("### Print OK");
+    expect(completed.artifacts.EXECUTION).toContain("ok");
+  });
+
+  it("keeps an execution failure artifact and log when code execution fails", async () => {
+    const workspaceBaseDir = await mkdtemp(path.join(os.tmpdir(), "productos-desktop-"));
+    const service = new DesktopService({
+      workspaceBaseDir,
+      provider: new NativeCliAgentProvider({
+        name: "codex",
+        command: process.execPath,
+        args: ["-e", "process.stderr.write('boom'); process.exit(2);"],
+      }),
+    });
+
+    await service.createWorkspace({
+      name: "Execution Failure",
+      idea: "Fail during execution",
+    });
+    await service.saveArtifact("IMPLEMENTATION", "# Implementation\n\nRun failing command.");
+
+    await expect(service.runAgent({ agent: "execution" })).rejects.toThrow("Execution Failed");
+
+    const opened = await service.openWorkspace("execution-failure");
+    expect(opened.artifacts.EXECUTION).toContain("# Execution Failed");
+    expect(opened.artifacts.EXECUTION).toContain("boom");
+    expect(opened.completedStates).not.toContain("EXECUTION");
+    expect(opened.logs[0]?.title).toBe("Code Execution Agent failed");
+  });
+
+  it("checks provider health for mock, available commands, and missing commands", async () => {
+    const workspaceBaseDir = await mkdtemp(path.join(os.tmpdir(), "productos-desktop-"));
+    const service = new DesktopService({ workspaceBaseDir });
+
+    await expect(service.checkProviderHealth()).resolves.toMatchObject({
+      provider: "mock",
+      ok: true,
+    });
+
+    await service.setProviderConfig({
+      provider: "codex",
+      command: process.execPath,
+      args: ["exec", "--skip-git-repo-check", "-"],
+      timeoutMs: 120_000,
+    });
+    await expect(service.checkProviderHealth()).resolves.toMatchObject({
+      provider: "codex",
+      ok: true,
+      command: process.execPath,
+    });
+
+    await service.setProviderConfig({
+      provider: "codex",
+      command: "missing-productos-cli-for-health-check",
+      args: ["exec", "--skip-git-repo-check", "-"],
+      timeoutMs: 120_000,
+    });
+    await expect(service.checkProviderHealth()).resolves.toMatchObject({
+      provider: "codex",
+      ok: false,
+      command: "missing-productos-cli-for-health-check",
+    });
+  });
+
+  it("writes a workspace log when a provider run fails", async () => {
+    const workspaceBaseDir = await mkdtemp(path.join(os.tmpdir(), "productos-desktop-"));
+    const service = new DesktopService({ workspaceBaseDir });
+
+    await service.createWorkspace({
+      name: "Logging Failure",
+      idea: "Trigger provider failure logging",
+    });
+    await service.setProviderConfig({
+      provider: "codex",
+      command: "missing-productos-cli-for-agent-run",
+      args: ["exec", "--skip-git-repo-check", "-"],
+      timeoutMs: 120_000,
+    });
+
+    await expect(service.runAgent({ agent: "research" })).rejects.toThrow();
+
+    const opened = await service.openWorkspace("logging-failure");
+    expect(opened.logs).toHaveLength(1);
+    expect(opened.logs[0]?.title).toBe("Research Agent failed");
+
+    const detail = await service.readLog(opened.logs[0]!.fileName);
+    expect(detail.content).toContain("# Research Agent failed");
+    expect(detail.content).toContain("missing-productos-cli-for-agent-run");
+    await expect(service.readLog("../project.json")).rejects.toThrow("Invalid log file name");
+  });
+
+  it("forwards native provider stdout and stderr events during agent runs", async () => {
+    const workspaceBaseDir = await mkdtemp(path.join(os.tmpdir(), "productos-desktop-"));
+    const events: Array<{ stream: "stdout" | "stderr"; content: string; agentName: string }> = [];
+    const service = new DesktopService({
+      workspaceBaseDir,
+      provider: new NativeCliAgentProvider({
+        name: "codex",
+        command: process.execPath,
+        args: [
+          "-e",
+          "process.stderr.write('planning\\n'); setTimeout(() => process.stdout.write('# Research\\n\\nStreamed output.'), 10);",
+        ],
+      }),
+      onRunEvent: (event) => {
+        events.push({
+          stream: event.stream,
+          content: event.content,
+          agentName: event.agentName,
+        });
+      },
+    });
+
+    await service.createWorkspace({
+      name: "Streaming Provider",
+      idea: "Watch CLI output while an agent runs",
+    });
+    const completed = await service.runAgent({ agent: "research" });
+
+    expect(completed.artifacts.RESEARCH).toContain("Streamed output.");
+    expect(events).toEqual([
+      { stream: "stderr", content: "planning\n", agentName: "Research Agent" },
+      { stream: "stdout", content: "# Research\n\nStreamed output.", agentName: "Research Agent" },
+    ]);
   });
 });
