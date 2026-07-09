@@ -220,6 +220,59 @@ describe("DesktopService", () => {
     expect(completed.runs[0]?.title).toBe("Research Agent Run");
   });
 
+  it("renames and deletes workspaces from the desktop service", async () => {
+    const workspaceBaseDir = await mkdtemp(path.join(os.tmpdir(), "productos-desktop-"));
+    const service = new DesktopService({ workspaceBaseDir });
+
+    await service.createWorkspace({
+      name: "First Product",
+      idea: "First idea",
+    });
+    await service.createWorkspace({
+      name: "Second Product",
+      idea: "Second idea",
+    });
+
+    const renamed = await service.renameWorkspace({
+      id: "first-product",
+      name: "Founder CRM",
+    });
+    expect(renamed.name).toBe("Founder CRM");
+    expect((await service.listWorkspaces()).map((item) => item.name).sort()).toEqual([
+      "Founder CRM",
+      "Second Product",
+    ]);
+
+    const next = await service.deleteWorkspace("first-product");
+    expect(next?.name).toBe("Second Product");
+    expect(await service.listWorkspaces()).toHaveLength(1);
+  });
+
+  it("derives an untitled workspace name from idea content before the first run", async () => {
+    const workspaceBaseDir = await mkdtemp(path.join(os.tmpdir(), "productos-desktop-"));
+    const service = new DesktopService({
+      workspaceBaseDir,
+      provider: new MockAgentProvider(),
+    });
+
+    await service.createWorkspace({
+      name: "Untitled Product",
+      idea: "# Idea\n\nAI Interview Platform\n\nHelp companies run interviews.",
+    });
+
+    const completed = await service.runPlanning();
+    expect(completed.name).toBe("AI Interview Platform");
+    expect((await service.listWorkspaces())[0]?.name).toBe("AI Interview Platform");
+
+    await service.renameWorkspace({
+      id: "untitled-product",
+      name: "Custom Name",
+    });
+    await service.saveArtifact("IDEA", "# Idea\n\nDifferent Idea Name\n");
+    const rerun = await service.runPlanning();
+    expect(rerun.name).toBe("Custom Name");
+  });
+
   it("stores verification config and appends verification results to execution output", async () => {
     const workspaceBaseDir = await mkdtemp(path.join(os.tmpdir(), "productos-desktop-"));
     const service = new DesktopService({
@@ -293,6 +346,7 @@ describe("DesktopService", () => {
     await expect(service.checkProviderHealth()).resolves.toMatchObject({
       provider: "mock",
       ok: true,
+      status: "ready",
     });
 
     await service.setProviderConfig({
@@ -304,6 +358,7 @@ describe("DesktopService", () => {
     await expect(service.checkProviderHealth()).resolves.toMatchObject({
       provider: "codex",
       ok: true,
+      status: "ready",
       command: process.execPath,
     });
 
@@ -316,6 +371,7 @@ describe("DesktopService", () => {
     await expect(service.checkProviderHealth()).resolves.toMatchObject({
       provider: "codex",
       ok: false,
+      status: "unavailable",
       command: "missing-productos-cli-for-health-check",
     });
   });
@@ -380,5 +436,34 @@ describe("DesktopService", () => {
       { stream: "stderr", content: "planning\n", agentName: "Research Agent" },
       { stream: "stdout", content: "# Research\n\nStreamed output.", agentName: "Research Agent" },
     ]);
+  });
+
+  it("cancels an active native provider run without writing a failure log", async () => {
+    const workspaceBaseDir = await mkdtemp(path.join(os.tmpdir(), "productos-desktop-"));
+    const service = new DesktopService({
+      workspaceBaseDir,
+      provider: new NativeCliAgentProvider({
+        name: "codex",
+        command: process.execPath,
+        args: ["-e", "setInterval(() => process.stdout.write('.'), 20);"],
+        timeoutMs: 5_000,
+      }),
+    });
+
+    await service.createWorkspace({
+      name: "Cancelable Run",
+      idea: "Cancel a running provider",
+    });
+
+    const run = service.runAgent({ agent: "research" });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    await expect(service.cancelAgentRun()).resolves.toEqual({ cancelled: true });
+    await expect(run).rejects.toThrow("cancelled");
+
+    const opened = await service.openWorkspace("cancelable-run");
+    expect(opened.logs).toHaveLength(0);
+    expect(opened.runs).toHaveLength(0);
+    await expect(service.cancelAgentRun()).resolves.toEqual({ cancelled: false });
   });
 });

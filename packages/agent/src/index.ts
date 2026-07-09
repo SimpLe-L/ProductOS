@@ -34,6 +34,7 @@ export interface AgentInput {
   outputArtifact: ArtifactType;
   prompt: string;
   onEvent?: (event: AgentRunEvent) => void;
+  signal?: AbortSignal;
 }
 
 export interface AgentResult {
@@ -61,6 +62,7 @@ export interface RunProductAgentInput {
   workspaceEngine: WorkspaceEngine;
   workflowEngine?: WorkflowEngine;
   onEvent?: (event: AgentRunEvent) => void;
+  signal?: AbortSignal;
 }
 
 interface VerificationResult {
@@ -409,6 +411,7 @@ export async function runResearchAgent(input: RunProductAgentInput): Promise<Age
 }
 
 export async function runPlanningAgent(input: RunProductAgentInput): Promise<AgentRunResult> {
+  throwIfAborted(input.signal);
   const startedAt = nowIso();
   const artifacts = await readInputArtifactsOrEmpty(input.workspaceEngine, input.workspace, [
     "IDEA",
@@ -427,10 +430,13 @@ export async function runPlanningAgent(input: RunProductAgentInput): Promise<Age
     outputArtifact: "TASKS",
     prompt,
     ...(input.onEvent ? { onEvent: input.onEvent } : {}),
+    ...(input.signal ? { signal: input.signal } : {}),
   });
+  throwIfAborted(input.signal);
   const parsed = parsePlanningOutput(result.content);
 
   for (const type of parsedPlanningArtifactTypes(parsed.artifacts)) {
+    throwIfAborted(input.signal);
     await input.workspaceEngine.writeArtifact({
       workspace: input.workspace,
       type,
@@ -497,6 +503,7 @@ export async function runPlanningAgent(input: RunProductAgentInput): Promise<Age
 
   if (input.workflowEngine) {
     for (const type of planningOutputArtifacts) {
+      throwIfAborted(input.signal);
       await input.workflowEngine.markCompleted(input.workspace, type);
     }
   }
@@ -605,6 +612,7 @@ async function runProductAgent(
   input: RunProductAgentInput,
   definition: ProductAgentDefinition,
 ): Promise<AgentRunResult> {
+  throwIfAborted(input.signal);
   const startedAt = nowIso();
   const artifacts = await readInputArtifacts(input.workspaceEngine, input.workspace, definition.inputArtifacts);
   const prompt = definition.prompt(artifacts);
@@ -621,8 +629,13 @@ async function runProductAgent(
       outputArtifact: definition.outputArtifact,
       prompt,
       ...(input.onEvent ? { onEvent: input.onEvent } : {}),
+      ...(input.signal ? { signal: input.signal } : {}),
     });
   } catch (error) {
+    if (isAbortError(error)) {
+      throw error;
+    }
+
     if (!definition.captureWorkspaceChanges || !beforeSnapshot) {
       throw error;
     }
@@ -633,6 +646,7 @@ async function runProductAgent(
     };
   }
 
+  throwIfAborted(input.signal);
   const workspaceChanges = beforeSnapshot
     ? diffWorkspaceSnapshots(beforeSnapshot, await snapshotWorkspaceFiles(input.workspace.rootPath))
     : null;
@@ -683,6 +697,24 @@ async function runProductAgent(
     runRecordPath,
     providerName: result.providerName,
   };
+}
+
+export class AgentRunCancelledError extends Error {
+  constructor(message = "Agent run was cancelled.") {
+    super(message);
+    this.name = "AgentRunCancelledError";
+  }
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw new AgentRunCancelledError();
+  }
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof AgentRunCancelledError ||
+    (error instanceof Error && (error.name === "AbortError" || error.name === "AgentRunCancelledError"));
 }
 
 function renderExecutionFailure(error: unknown): string {

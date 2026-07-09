@@ -1,4 +1,4 @@
-import { Check, FileText, Folder, Loader2, Play, Plus, Sparkles } from "lucide-react";
+import { Check, FileText, Folder, Loader2, Pencil, Play, Plus, Sparkles, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -14,7 +14,7 @@ import type {
 } from "../../shared.js";
 import { mvpArtifactTypes } from "../../shared.js";
 import {
-  artifactFiles,
+  artifactDisplayNames,
   type CenterMode,
   type SidebarSectionId,
 } from "../app-config.js";
@@ -24,7 +24,9 @@ export function WorkspaceSidebar({
   busy,
   completedCount,
   onCreateWorkspace,
+  onDeleteWorkspace,
   onOpenWorkspace,
+  onRenameWorkspace,
   onRunMvpChain,
   onRunPlanning,
   onSelectArtifact,
@@ -38,7 +40,9 @@ export function WorkspaceSidebar({
   busy: string | null;
   completedCount: number;
   onCreateWorkspace: () => void;
+  onDeleteWorkspace: (id: string, name: string) => void;
   onOpenWorkspace: (id: string) => void;
+  onRenameWorkspace: (id: string, name: string) => void;
   onRunMvpChain: () => void;
   onRunPlanning: () => void;
   onSelectArtifact: (type: MvpArtifactType) => void;
@@ -50,7 +54,7 @@ export function WorkspaceSidebar({
   workspaceList: DesktopWorkspaceListItem[];
 }) {
   return (
-    <section className="grid min-h-0 min-w-0 grid-rows-[auto_auto_auto_1fr_auto] border-r border-border bg-sidebar max-[820px]:hidden">
+    <section className="grid min-h-0 min-w-0 grid-rows-[auto_auto_1fr_auto] border-r border-border bg-sidebar max-[820px]:hidden">
       <header className="flex min-h-14 items-center justify-between gap-2.5 px-4 pb-2 pt-3">
         <div className="min-w-0">
           <span className="text-[11px] font-semibold text-muted-foreground">Workspace</span>
@@ -70,10 +74,6 @@ export function WorkspaceSidebar({
         </Tooltip>
       </header>
 
-      <div className="mx-4 mb-3 [overflow-wrap:anywhere] text-[11px] leading-relaxed text-muted-foreground">
-        {workspace.rootPath}
-      </div>
-
       {workspaceList.length > 0 && (
         <SidebarSection
           open={sidebarOpen.projects}
@@ -82,19 +82,45 @@ export function WorkspaceSidebar({
         >
           <div className="grid gap-0.5">
             {workspaceList.map((item) => (
-              <Button
+              <div
                 key={item.id}
                 className={cn(
-                  "grid h-8 grid-cols-[auto_minmax(0,1fr)] justify-start gap-2 px-2 text-muted-foreground",
+                  "grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-0.5 rounded-lg",
                   item.id === workspace.id && "bg-sidebar-accent text-sidebar-accent-foreground",
                 )}
-                variant="ghost"
-                size="sm"
-                onClick={() => onOpenWorkspace(item.id)}
               >
-                <Folder size={14} />
-                <span className="truncate text-left">{item.name}</span>
-              </Button>
+                <Button
+                  className="grid h-8 grid-cols-[auto_minmax(0,1fr)] justify-start gap-2 px-2 text-muted-foreground"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => onOpenWorkspace(item.id)}
+                >
+                  <Folder size={14} />
+                  <span className="truncate text-left">{item.name}</span>
+                </Button>
+                <Tooltip>
+                  <TooltipTrigger
+                    className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+                    disabled={Boolean(busy)}
+                    onClick={() => onRenameWorkspace(item.id, item.name)}
+                    aria-label={`Rename ${item.name}`}
+                  >
+                    <Pencil size={13} />
+                  </TooltipTrigger>
+                  <TooltipContent>Rename</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger
+                    className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+                    disabled={Boolean(busy)}
+                    onClick={() => onDeleteWorkspace(item.id, item.name)}
+                    aria-label={`Delete ${item.name}`}
+                  >
+                    <Trash2 size={13} />
+                  </TooltipTrigger>
+                  <TooltipContent>Delete</TooltipContent>
+                </Tooltip>
+              </div>
             ))}
           </div>
         </SidebarSection>
@@ -122,7 +148,7 @@ export function WorkspaceSidebar({
                   onClick={() => onSelectArtifact(type)}
                 >
                   <FileText size={14} />
-                  <span className="truncate text-left">{artifactFiles[type]}</span>
+                  <span className="truncate text-left">{artifactDisplayNames[type]}</span>
                   {complete && <Check className="text-green-700" size={14} />}
                 </Button>
               );

@@ -8,6 +8,7 @@ import type {
 import { artifactLabels } from "./app-config.js";
 
 export function createBrowserPreviewApi(): DesktopApi {
+  const isElectronShell = navigator.userAgent.includes("Electron");
   let workspace: DesktopWorkspaceSummary | null = null;
   let previewProviderConfig: DesktopProviderConfig = {
     provider: "mock",
@@ -18,6 +19,7 @@ export function createBrowserPreviewApi(): DesktopApi {
   let previewVerificationConfig: DesktopVerificationConfig = {
     commands: [],
   };
+  const workspaceList: DesktopWorkspaceSummary[] = [];
 
   function ensureWorkspace() {
     if (!workspace) {
@@ -29,17 +31,13 @@ export function createBrowserPreviewApi(): DesktopApi {
 
   return {
     async listWorkspaces() {
-      return workspace
-        ? [
-            {
-              id: workspace.id,
-              name: workspace.name,
-              description: workspace.description,
-              rootPath: workspace.rootPath,
-              updatedAt: new Date().toISOString(),
-            },
-          ]
-        : [];
+      return workspaceList.map((item) => ({
+        id: item.id,
+        name: item.name,
+        description: item.description,
+        rootPath: item.rootPath,
+        updatedAt: new Date().toISOString(),
+      }));
     },
     async openWorkspace() {
       return ensureWorkspace();
@@ -49,7 +47,7 @@ export function createBrowserPreviewApi(): DesktopApi {
     },
     async createWorkspace(input) {
       workspace = {
-        id: "preview",
+        id: `preview-${workspaceList.length + 1}`,
         name: input.name,
         description: input.description ?? "",
         rootPath: "~/OpenFounder/preview",
@@ -70,7 +68,29 @@ export function createBrowserPreviewApi(): DesktopApi {
         runs: [],
         logs: [],
       };
+      workspaceList.unshift(workspace);
       return workspace;
+    },
+    async renameWorkspace(input) {
+      const found = workspaceList.find((item) => item.id === input.id);
+      if (!found) {
+        throw new Error(`Workspace not found: ${input.id}`);
+      }
+      found.name = input.name.trim() || found.name;
+      if (workspace?.id === found.id) {
+        workspace = found;
+      }
+      return { ...found };
+    },
+    async deleteWorkspace(id) {
+      const index = workspaceList.findIndex((item) => item.id === id);
+      if (index >= 0) {
+        workspaceList.splice(index, 1);
+      }
+      if (workspace?.id === id) {
+        workspace = workspaceList[0] ?? null;
+      }
+      return workspace ? { ...workspace } : null;
     },
     async saveArtifact(type, content) {
       const loaded = ensureWorkspace();
@@ -85,18 +105,39 @@ export function createBrowserPreviewApi(): DesktopApi {
       return { ...previewProviderConfig, args: [...previewProviderConfig.args] };
     },
     async checkProviderHealth() {
+      if (previewProviderConfig.provider !== "mock") {
+        if (isElectronShell) {
+          return {
+            provider: previewProviderConfig.provider,
+            ok: false,
+            status: "unavailable",
+            command: previewProviderConfig.command,
+            message: "Electron preload bridge is unavailable.",
+            details:
+              "The desktop window did not expose window.openFounder, so OpenFounder cannot call local providers from this session.",
+            checkedAt: new Date().toISOString(),
+          };
+        }
+
+        return {
+          provider: previewProviderConfig.provider,
+          ok: false,
+          status: "preview-only",
+          command: previewProviderConfig.command,
+          message: `${previewProviderConfig.command} was not checked in browser preview.`,
+          details:
+            "Browser preview cannot run local CLIs. This is not a Codex failure; open the Electron app and click Check to verify the real provider.",
+          checkedAt: new Date().toISOString(),
+        };
+      }
+
       return {
-        provider: previewProviderConfig.provider,
-        ok: previewProviderConfig.provider === "mock",
-        command: previewProviderConfig.command || "mock",
-        message:
-          previewProviderConfig.provider === "mock"
-            ? "Mock provider is ready."
-            : "Provider health checks run in Electron.",
-        details:
-          previewProviderConfig.provider === "mock"
-            ? "Mock mode uses deterministic local output."
-            : "Open the Electron app to check local CLI availability.",
+        provider: "mock",
+        ok: true,
+        status: "ready",
+        command: "mock",
+        message: "Mock provider is ready.",
+        details: "Mock mode uses deterministic local output.",
         checkedAt: new Date().toISOString(),
       };
     },
@@ -213,6 +254,9 @@ export function createBrowserPreviewApi(): DesktopApi {
       }
 
       return { ...loaded };
+    },
+    async cancelAgentRun() {
+      return { cancelled: false };
     },
     onAgentRunEvent() {
       return () => undefined;

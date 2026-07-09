@@ -28,6 +28,7 @@ export class NativeCliAgentProvider implements AgentProvider {
       cwd: input.workspace.rootPath,
       stdin: input.prompt,
       timeoutMs: this.timeoutMs,
+      ...(input.signal ? { signal: input.signal } : {}),
       onStream: (stream, content) => {
         input.onEvent?.({
           agentName: input.agentName,
@@ -84,6 +85,7 @@ interface RunCommandInput {
   cwd: string;
   stdin: string;
   timeoutMs: number;
+  signal?: AbortSignal;
   onStream?: (stream: "stdout" | "stderr", content: string) => void;
 }
 
@@ -94,16 +96,34 @@ interface RunCommandOutput {
 
 function runCommand(input: RunCommandInput): Promise<RunCommandOutput> {
   return new Promise((resolve, reject) => {
+    if (input.signal?.aborted) {
+      reject(new AbortError());
+      return;
+    }
+
     const child = spawn(input.command, input.args, {
       cwd: input.cwd,
       stdio: ["pipe", "pipe", "pipe"],
     });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
+    let settled = false;
+    const settle = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      input.signal?.removeEventListener("abort", onAbort);
+      callback();
+    };
+    const onAbort = () => {
+      child.kill("SIGTERM");
+      settle(() => reject(new AbortError()));
+    };
     const timeout = setTimeout(() => {
       child.kill("SIGTERM");
-      reject(new Error(`Agent provider timed out after ${input.timeoutMs}ms: ${input.command}`));
+      settle(() => reject(new Error(`Agent provider timed out after ${input.timeoutMs}ms: ${input.command}`)));
     }, input.timeoutMs);
+    input.signal?.addEventListener("abort", onAbort, { once: true });
 
     child.stdout.on("data", (chunk: Buffer) => {
       stdout.push(chunk);
@@ -114,24 +134,29 @@ function runCommand(input: RunCommandInput): Promise<RunCommandOutput> {
       input.onStream?.("stderr", chunk.toString("utf8"));
     });
     child.on("error", (error) => {
-      clearTimeout(timeout);
-      reject(error);
+      settle(() => reject(error));
     });
     child.on("close", (code) => {
-      clearTimeout(timeout);
       const result = {
         stdout: Buffer.concat(stdout).toString("utf8"),
         stderr: Buffer.concat(stderr).toString("utf8"),
       };
 
       if (code === 0) {
-        resolve(result);
+        settle(() => resolve(result));
         return;
       }
 
-      reject(new Error(`Agent provider exited with code ${code}: ${result.stderr || result.stdout}`));
+      settle(() => reject(new Error(`Agent provider exited with code ${code}: ${result.stderr || result.stdout}`)));
     });
 
     child.stdin.end(input.stdin);
   });
+}
+
+class AbortError extends Error {
+  constructor() {
+    super("Agent run was cancelled.");
+    this.name = "AbortError";
+  }
 }

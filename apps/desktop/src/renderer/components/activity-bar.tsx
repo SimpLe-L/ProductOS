@@ -9,22 +9,29 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import type { DesktopProviderHealth, DesktopProviderKind } from "../../shared.js";
 import { activityItems, systemItems, type ActivityId } from "../app-config.js";
 
 export function ActivityBar({
   activeActivity,
   collapsed,
+  checkingProvider,
   isSystemOpen,
   onSelect,
   onToggleCollapsed,
   onToggleSystem,
+  provider,
+  providerHealth,
 }: {
   activeActivity: ActivityId;
   collapsed: boolean;
+  checkingProvider: boolean;
   isSystemOpen: boolean;
   onSelect: (activity: ActivityId) => void;
   onToggleCollapsed: () => void;
   onToggleSystem: () => void;
+  provider: DesktopProviderKind;
+  providerHealth: DesktopProviderHealth | null;
 }) {
   return (
     <aside className={cn("flex min-h-0 min-w-0 flex-col border-r border-border bg-[var(--color-bg-tertiary)]", collapsed && "items-center", "max-[1180px]:items-center")}>
@@ -79,6 +86,16 @@ export function ActivityBar({
               onClick={() => onSelect(item.id)}
             />
           ))}
+        {isSystemOpen && (
+          <ProviderStatusButton
+            active={activeActivity === "settings"}
+            checking={checkingProvider}
+            collapsed={collapsed}
+            provider={provider}
+            providerHealth={providerHealth}
+            onClick={() => onSelect("settings")}
+          />
+        )}
       </div>
 
       <Separator />
@@ -101,6 +118,51 @@ export function ActivityBar({
         </Button>
       </div>
     </aside>
+  );
+}
+
+function ProviderStatusButton({
+  active,
+  checking,
+  collapsed,
+  provider,
+  providerHealth,
+  onClick,
+}: {
+  active: boolean;
+  checking: boolean;
+  collapsed: boolean;
+  provider: DesktopProviderKind;
+  providerHealth: DesktopProviderHealth | null;
+  onClick: () => void;
+}) {
+  const ready = providerHealth?.ok === true && providerHealth.status === "ready";
+  const label = provider === "mock" ? "Mock" : "Codex";
+  const stateLabel = checking ? "checking" : ready ? "ready" : "unavailable";
+  const dotClassName = checking
+    ? "bg-amber-500 shadow-[0_0_0_3px_rgba(245,158,11,0.16)]"
+    : ready
+      ? "bg-green-600 shadow-[0_0_0_3px_rgba(22,163,74,0.16)]"
+      : "bg-red-600 shadow-[0_0_0_3px_rgba(220,38,38,0.14)]";
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        className={cn(
+          "mt-1 inline-flex h-8 w-full items-center justify-center gap-2 rounded-lg border border-border bg-background px-2.5 text-xs font-semibold text-foreground transition-colors hover:bg-muted max-[1180px]:size-9 max-[1180px]:px-0",
+          collapsed && "size-9 px-0",
+          active && "border-primary/35 bg-sidebar-accent text-sidebar-accent-foreground",
+        )}
+        aria-label={`${label}: ${stateLabel}`}
+        onClick={onClick}
+      >
+        <span className={cn("truncate", collapsed && "hidden", "max-[1180px]:hidden")}>{label}</span>
+        <span className={cn("size-2.5 shrink-0 rounded-full", dotClassName)} />
+      </TooltipTrigger>
+      <TooltipContent className={cn(!collapsed && "min-[1181px]:hidden")} side="right">
+        {label}: {stateLabel}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 

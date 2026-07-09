@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
+  AgentRunCancelledError,
   MockAgentProvider,
   NativeCliAgentProvider,
   runCodeExecutionAgent,
@@ -28,10 +29,12 @@ import {
   type DesktopProviderHealth,
   type DesktopRunDetail,
   type DesktopRunSummary,
+  type DesktopRunCancelResult,
   type DesktopVerificationConfig,
   type DesktopWorkspaceListItem,
   type DesktopWorkspaceSummary,
   type MvpArtifactType,
+  type RenameWorkspaceRequest,
   type RunAgentRequest,
   mvpArtifactTypes,
 } from "./shared.js";
@@ -55,6 +58,7 @@ export class DesktopService {
   private providerConfig: DesktopProviderConfig;
   private providerConfigLoaded = false;
   private currentWorkspace: WorkspaceRef | null = null;
+  private currentRunAbortController: AbortController | null = null;
   private readonly onRunEvent: ((event: DesktopAgentRunEvent) => void) | undefined;
 
   constructor(options: DesktopServiceOptions) {
@@ -131,6 +135,32 @@ export class DesktopService {
     return this.summarizeWorkspace(workspace.ref);
   }
 
+  async renameWorkspace(input: RenameWorkspaceRequest): Promise<DesktopWorkspaceSummary> {
+    const workspace = await this.workspaceEngine.loadWorkspace(input.id);
+    const name = normalizeWorkspaceName(input.name);
+    await writeWorkspaceProject(workspace.ref.rootPath, {
+      ...workspace.project,
+      name,
+      updatedAt: new Date().toISOString(),
+    });
+    if (this.currentWorkspace?.id === workspace.ref.id) {
+      this.currentWorkspace = workspace.ref;
+    }
+    return this.summarizeWorkspace(workspace.ref);
+  }
+
+  async deleteWorkspace(id: string): Promise<DesktopWorkspaceSummary | null> {
+    const workspace = await this.workspaceEngine.loadWorkspace(id);
+    await rm(workspace.ref.rootPath, { recursive: true, force: true });
+
+    if (this.currentWorkspace?.id === workspace.ref.id) {
+      this.currentWorkspace = null;
+      return this.loadWorkspace();
+    }
+
+    return this.currentWorkspace ? this.summarizeWorkspace(this.currentWorkspace) : this.loadWorkspace();
+  }
+
   async saveArtifact(type: MvpArtifactType, content: string): Promise<DesktopWorkspaceSummary> {
     const workspace = this.requireWorkspace();
     await this.workspaceEngine.writeArtifact({
@@ -161,6 +191,7 @@ export class DesktopService {
       return {
         provider: "mock",
         ok: true,
+        status: "ready",
         command: "mock",
         message: "Mock provider is ready.",
         details: "Mock mode uses deterministic local output and does not call an external CLI.",
@@ -178,8 +209,12 @@ export class DesktopService {
       return {
         provider: this.providerConfig.provider,
         ok: true,
+        status: "ready",
         command,
-        message: `${command} is available.`,
+        message:
+          this.providerConfig.provider === "codex"
+            ? "Codex CLI is ready."
+            : `${command} is ready.`,
         details: details || "Command responded successfully.",
         checkedAt,
       };
@@ -187,6 +222,7 @@ export class DesktopService {
       return {
         provider: this.providerConfig.provider,
         ok: false,
+        status: "unavailable",
         command,
         message: `${command} is not ready.`,
         details: error instanceof Error ? error.message : String(error),
@@ -272,32 +308,51 @@ export class DesktopService {
 
   async runAgent(input: RunAgentRequest): Promise<DesktopWorkspaceSummary> {
     const workspace = this.requireWorkspace();
+    await this.renameUntitledWorkspaceFromIdea(workspace);
+    const controller = this.startRunController();
     const runInput = {
       workspace,
       provider: this.provider,
       workspaceEngine: this.workspaceEngine,
       workflowEngine: this.workflowEngine,
+      signal: controller.signal,
       ...(this.onRunEvent ? { onEvent: (event: AgentRunEvent) => this.onRunEvent?.(event) } : {}),
     };
 
     try {
+      throwIfRunCancelled(controller.signal);
       if (input.agent === "research") await runResearchAgent(runInput);
+      throwIfRunCancelled(controller.signal);
       if (input.agent === "planning") await runPlanningAgent(runInput);
+      throwIfRunCancelled(controller.signal);
       if (input.agent === "competitor") await runCompetitorAgent(runInput);
+      throwIfRunCancelled(controller.signal);
       if (input.agent === "vision") await runVisionAgent(runInput);
+      throwIfRunCancelled(controller.signal);
       if (input.agent === "roadmap") await runRoadmapAgent(runInput);
+      throwIfRunCancelled(controller.signal);
       if (input.agent === "prd") await runPrdAgent(runInput);
+      throwIfRunCancelled(controller.signal);
       if (input.agent === "task") await runTaskAgent(runInput);
+      throwIfRunCancelled(controller.signal);
       if (input.agent === "tech-design") await runTechDesignAgent(runInput);
+      throwIfRunCancelled(controller.signal);
       if (input.agent === "implementation") await runImplementationAgent(runInput);
+      throwIfRunCancelled(controller.signal);
       if (input.agent === "execution") await runCodeExecutionAgent(runInput);
     } catch (error) {
+      if (isRunCancelled(error)) {
+        throw error;
+      }
+
       await this.writeAgentErrorLog({
         workspace,
         title: `${agentLabel(input.agent)} failed`,
         error,
       });
       throw error;
+    } finally {
+      this.finishRunController(controller);
     }
 
     return this.summarizeWorkspace(workspace);
@@ -305,23 +360,32 @@ export class DesktopService {
 
   async runPlanning(): Promise<DesktopWorkspaceSummary> {
     const workspace = this.requireWorkspace();
+    await this.renameUntitledWorkspaceFromIdea(workspace);
+    const controller = this.startRunController();
     const runInput = {
       workspace,
       provider: this.provider,
       workspaceEngine: this.workspaceEngine,
       workflowEngine: this.workflowEngine,
+      signal: controller.signal,
       ...(this.onRunEvent ? { onEvent: (event: AgentRunEvent) => this.onRunEvent?.(event) } : {}),
     };
 
     try {
       await runPlanningAgent(runInput);
     } catch (error) {
+      if (isRunCancelled(error)) {
+        throw error;
+      }
+
       await this.writeAgentErrorLog({
         workspace,
         title: "Planning Agent failed",
         error,
       });
       throw error;
+    } finally {
+      this.finishRunController(controller);
     }
 
     return this.summarizeWorkspace(workspace);
@@ -329,34 +393,92 @@ export class DesktopService {
 
   async runMvpChain(): Promise<DesktopWorkspaceSummary> {
     const workspace = this.requireWorkspace();
+    await this.renameUntitledWorkspaceFromIdea(workspace);
+    const controller = this.startRunController();
     const runInput = {
       workspace,
       provider: this.provider,
       workspaceEngine: this.workspaceEngine,
       workflowEngine: this.workflowEngine,
+      signal: controller.signal,
       ...(this.onRunEvent ? { onEvent: (event: AgentRunEvent) => this.onRunEvent?.(event) } : {}),
     };
 
     try {
+      throwIfRunCancelled(controller.signal);
       await runResearchAgent(runInput);
+      throwIfRunCancelled(controller.signal);
       await runCompetitorAgent(runInput);
+      throwIfRunCancelled(controller.signal);
       await runVisionAgent(runInput);
+      throwIfRunCancelled(controller.signal);
       await runRoadmapAgent(runInput);
+      throwIfRunCancelled(controller.signal);
       await runPrdAgent(runInput);
+      throwIfRunCancelled(controller.signal);
       await runTaskAgent(runInput);
+      throwIfRunCancelled(controller.signal);
       await runTechDesignAgent(runInput);
+      throwIfRunCancelled(controller.signal);
       await runImplementationAgent(runInput);
+      throwIfRunCancelled(controller.signal);
       await runCodeExecutionAgent(runInput);
     } catch (error) {
+      if (isRunCancelled(error)) {
+        throw error;
+      }
+
       await this.writeAgentErrorLog({
         workspace,
         title: "MVP chain failed",
         error,
       });
       throw error;
+    } finally {
+      this.finishRunController(controller);
     }
 
     return this.summarizeWorkspace(workspace);
+  }
+
+  async cancelAgentRun(): Promise<DesktopRunCancelResult> {
+    if (!this.currentRunAbortController || this.currentRunAbortController.signal.aborted) {
+      return { cancelled: false };
+    }
+
+    this.currentRunAbortController.abort();
+    return { cancelled: true };
+  }
+
+  private startRunController(): AbortController {
+    if (this.currentRunAbortController && !this.currentRunAbortController.signal.aborted) {
+      throw new Error("Another agent run is already in progress.");
+    }
+
+    const controller = new AbortController();
+    this.currentRunAbortController = controller;
+    return controller;
+  }
+
+  private finishRunController(controller: AbortController): void {
+    if (this.currentRunAbortController === controller) {
+      this.currentRunAbortController = null;
+    }
+  }
+
+  private async renameUntitledWorkspaceFromIdea(workspace: WorkspaceRef): Promise<void> {
+    const loaded = await this.workspaceEngine.loadWorkspace(workspace.rootPath);
+    if (!isUntitledWorkspaceName(loaded.project.name)) return;
+
+    const idea = await this.readArtifactOrEmpty(workspace, "IDEA");
+    const derivedName = deriveWorkspaceNameFromIdea(idea);
+    if (!derivedName || derivedName === loaded.project.name) return;
+
+    await writeWorkspaceProject(workspace.rootPath, {
+      ...loaded.project,
+      name: derivedName,
+      updatedAt: new Date().toISOString(),
+    });
   }
 
   private async writeAgentErrorLog(input: {
@@ -515,6 +637,54 @@ function providerDefaults(provider: DesktopProviderConfig["provider"]): Pick<Des
   return { command: "", args: [] };
 }
 
+interface WorkspaceProjectMetadata {
+  id: string;
+  name: string;
+  description: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+function normalizeWorkspaceName(name: string): string {
+  const normalized = name.trim().replace(/\s+/g, " ");
+  if (!normalized) {
+    throw new Error("Workspace name cannot be empty.");
+  }
+  return normalized.slice(0, 80);
+}
+
+function isUntitledWorkspaceName(name: string): boolean {
+  return /^Untitled Product(?:\s+\d+)?$/i.test(name.trim());
+}
+
+function deriveWorkspaceNameFromIdea(content: string): string | null {
+  const line = content
+    .split(/\r?\n/)
+    .map((value) => value.trim())
+    .find((value) => value && !/^#\s*idea\s*$/i.test(value));
+
+  if (!line) return null;
+
+  const cleaned = line
+    .replace(/^#+\s*/, "")
+    .replace(/^[-*]\s+/, "")
+    .replace(/[`*_~>#]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!cleaned) return null;
+
+  return cleaned.length > 32 ? cleaned.slice(0, 32).trimEnd() : cleaned;
+}
+
+async function writeWorkspaceProject(rootPath: string, project: WorkspaceProjectMetadata): Promise<void> {
+  await writeFile(
+    path.join(rootPath, ".meta", "project.json"),
+    `${JSON.stringify(project, null, 2)}\n`,
+    "utf8",
+  );
+}
+
 async function listRuns(rootPath: string): Promise<DesktopRunSummary[]> {
   const runsDir = path.join(rootPath, "runs");
 
@@ -581,6 +751,17 @@ function agentLabel(agent: RunAgentRequest["agent"]): string {
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
+}
+
+function isRunCancelled(error: unknown): boolean {
+  return error instanceof AgentRunCancelledError ||
+    (error instanceof Error && (error.name === "AbortError" || error.name === "AgentRunCancelledError"));
+}
+
+function throwIfRunCancelled(signal: AbortSignal): void {
+  if (signal.aborted) {
+    throw new AgentRunCancelledError();
+  }
 }
 
 function renderErrorLog(input: {

@@ -7,6 +7,7 @@ import {
   type DesktopProviderConfig,
   type DesktopVerificationConfig,
   type MvpArtifactType,
+  type RenameWorkspaceRequest,
   type RunAgentRequest,
 } from "./shared.js";
 import { DesktopService } from "./desktop-service.js";
@@ -24,7 +25,7 @@ async function createWindow(): Promise<void> {
     title: "OpenFounder",
     backgroundColor: "#f7f4ec",
     webPreferences: {
-      preload: path.join(__dirname, "preload.js"),
+      preload: path.join(app.getAppPath(), "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
     },
@@ -82,6 +83,12 @@ function registerIpc(): void {
     desktopService.createWorkspace(input),
   );
 
+  ipcMain.handle("workspace:rename", (_event, input: RenameWorkspaceRequest) =>
+    desktopService.renameWorkspace(input),
+  );
+
+  ipcMain.handle("workspace:delete", (_event, id: string) => desktopService.deleteWorkspace(id));
+
   ipcMain.handle("artifact:save", (_event, input: { type: MvpArtifactType; content: string }) =>
     desktopService.saveArtifact(input.type, input.content),
   );
@@ -109,6 +116,8 @@ function registerIpc(): void {
   ipcMain.handle("agent:run-planning", () => desktopService.runPlanning());
 
   ipcMain.handle("agent:run-chain", () => desktopService.runMvpChain());
+
+  ipcMain.handle("agent:cancel", () => desktopService.cancelAgentRun());
 }
 
 function broadcastAgentRunEvent(event: DesktopAgentRunEvent): void {

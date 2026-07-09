@@ -67,6 +67,7 @@ export interface DesktopProviderConfig {
 export interface DesktopProviderHealth {
   provider: DesktopProviderKind;
   ok: boolean;
+  status?: "ready" | "unavailable" | "preview-only";
   command: string;
   message: string;
   details: string;
@@ -91,10 +92,19 @@ export interface DesktopAgentRunEvent {
   timestamp: string;
 }
 
+export interface DesktopRunCancelResult {
+  cancelled: boolean;
+}
+
 export interface CreateWorkspaceRequest {
   name: string;
   description?: string;
   idea: string;
+}
+
+export interface RenameWorkspaceRequest {
+  id: string;
+  name: string;
 }
 
 export type RunAgentRequest =
@@ -114,6 +124,8 @@ export interface DesktopApi {
   openWorkspace(id: string): Promise<DesktopWorkspaceSummary>;
   loadWorkspace(): Promise<DesktopWorkspaceSummary | null>;
   createWorkspace(input: CreateWorkspaceRequest): Promise<DesktopWorkspaceSummary>;
+  renameWorkspace(input: RenameWorkspaceRequest): Promise<DesktopWorkspaceSummary>;
+  deleteWorkspace(id: string): Promise<DesktopWorkspaceSummary | null>;
   saveArtifact(type: MvpArtifactType, content: string): Promise<DesktopWorkspaceSummary>;
   getProviderConfig(): Promise<DesktopProviderConfig>;
   setProviderConfig(config: DesktopProviderConfig): Promise<DesktopProviderConfig>;
@@ -125,5 +137,6 @@ export interface DesktopApi {
   runAgent(input: RunAgentRequest): Promise<DesktopWorkspaceSummary>;
   runPlanning(): Promise<DesktopWorkspaceSummary>;
   runMvpChain(): Promise<DesktopWorkspaceSummary>;
+  cancelAgentRun(): Promise<DesktopRunCancelResult>;
   onAgentRunEvent(listener: (event: DesktopAgentRunEvent) => void): () => void;
 }

@@ -53,6 +53,32 @@ export const artifactFiles: Record<MvpArtifactType, string> = {
   EXECUTION: "execution.md",
 };
 
+export const artifactChineseNotes: Record<MvpArtifactType, string> = {
+  IDEA: "原始想法",
+  RESEARCH: "市场研究",
+  COMPETITORS: "竞品分析",
+  VISION: "产品愿景",
+  ROADMAP: "路线图",
+  PRD: "产品需求",
+  TASKS: "任务拆解",
+  TECH_DESIGN: "技术设计",
+  IMPLEMENTATION: "实现计划",
+  EXECUTION: "执行报告",
+};
+
+export const artifactDisplayNames: Record<MvpArtifactType, string> = {
+  IDEA: "idea(原始想法).md",
+  RESEARCH: "research(市场研究).md",
+  COMPETITORS: "competitors(竞品分析).md",
+  VISION: "vision(产品愿景).md",
+  ROADMAP: "roadmap(路线图).md",
+  PRD: "prd(产品需求).md",
+  TASKS: "tasks(任务拆解).md",
+  TECH_DESIGN: "tech-design(技术设计).md",
+  IMPLEMENTATION: "implementation(实现计划).md",
+  EXECUTION: "execution(执行报告).md",
+};
+
 export const agentByArtifact: Partial<Record<MvpArtifactType, RunAgentRequest["agent"]>> = {
   RESEARCH: "research",
   COMPETITORS: "competitor",
@@ -93,18 +119,10 @@ export const systemItems = [
 export type ActivityId = (typeof activityItems)[number]["id"] | (typeof systemItems)[number]["id"] | "settings";
 export type CenterMode = "artifact" | "log" | "run" | "inbox" | "settings";
 export type SidebarSectionId = "projects" | "artifacts";
-export type InspectorSectionId = "provider" | "workflow" | "runs" | "logs";
 
 export const defaultSidebarOpen: Record<SidebarSectionId, boolean> = {
   projects: true,
   artifacts: true,
-};
-
-export const defaultInspectorOpen: Record<InspectorSectionId, boolean> = {
-  provider: true,
-  workflow: true,
-  runs: true,
-  logs: true,
 };
 
 export const providerOptions: Array<{ label: string; value: DesktopProviderKind }> = [

@@ -28,6 +28,7 @@ export function CenterPane({
   activeActivity,
   busy,
   canRunSelected,
+  checkingProvider,
   draft,
   onCheckProvider,
   onDraftChange,
@@ -54,6 +55,7 @@ export function CenterPane({
   activeActivity: ActivityId;
   busy: string | null;
   canRunSelected: boolean;
+  checkingProvider: boolean;
   draft: string;
   onCheckProvider: () => void;
   onDraftChange: (value: string) => void;
@@ -140,6 +142,7 @@ export function CenterPane({
         activeActivity={activeActivity}
         draft={draft}
         onCheckProvider={onCheckProvider}
+        checkingProvider={checkingProvider}
         onDraftChange={onDraftChange}
         onOpenLog={onOpenLog}
         onOpenRun={onOpenRun}
@@ -164,6 +167,7 @@ export function CenterPane({
 
 function CenterContent({
   draft,
+  checkingProvider,
   onCheckProvider,
   onDraftChange,
   onOpenLog,
@@ -185,6 +189,7 @@ function CenterContent({
 }: {
   activeActivity: ActivityId;
   draft: string;
+  checkingProvider: boolean;
   onCheckProvider: () => void;
   onDraftChange: (value: string) => void;
   onOpenLog: (fileName: string) => void;
@@ -272,6 +277,7 @@ function CenterContent({
             providerDraft={providerDraft}
             providerHealth={providerHealth}
             verificationDraft={verificationDraft}
+            checking={checkingProvider}
             onCheck={onCheckProvider}
             onProviderChange={onProviderChange}
             onProviderDraftChange={onProviderDraftChange}

@@ -105,6 +105,32 @@ describe("NativeCliAgentProvider", () => {
       content: workspace.rootPath,
     });
   });
+
+  it("aborts a running CLI provider process", async () => {
+    const workspace = await testWorkspace();
+    const controller = new AbortController();
+    const provider = new NativeCliAgentProvider({
+      name: "mock",
+      command: process.execPath,
+      args: ["-e", "setInterval(() => process.stdout.write('.'), 20);"],
+      timeoutMs: 5_000,
+    });
+
+    const run = provider.run({
+      agentName: "Research Agent",
+      workspace,
+      inputArtifacts: {
+        IDEA: "Demo idea",
+      },
+      outputArtifact: "RESEARCH",
+      prompt: "prompt",
+      signal: controller.signal,
+    });
+
+    setTimeout(() => controller.abort(), 50);
+
+    await expect(run).rejects.toThrow("cancelled");
+  });
 });
 
 async function testWorkspace() {

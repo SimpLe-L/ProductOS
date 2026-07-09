@@ -2,12 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Loader2,
   Sparkles,
+  StopCircle,
 } from "lucide-react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type {
   CreateWorkspaceRequest,
-  DesktopAgentRunEvent,
   DesktopApi,
   DesktopLogDetail,
   DesktopProviderConfig,
@@ -21,12 +21,10 @@ import type {
 import {
   agentButtonLabels,
   agentByArtifact,
-  defaultInspectorOpen,
   defaultSidebarOpen,
   providerDefaults,
   type ActivityId,
   type CenterMode,
-  type InspectorSectionId,
   type SidebarSectionId,
 } from "./app-config.js";
 import {
@@ -38,7 +36,6 @@ import {
 import { createBrowserPreviewApi } from "./browser-preview-api.js";
 import { ActivityBar as ActivityRail } from "./components/activity-bar.js";
 import { CenterPane } from "./components/center-pane.js";
-import { WorkspaceInspector } from "./components/workspace-inspector.js";
 import { WorkspaceSidebar } from "./components/workspace-sidebar.js";
 
 interface ActiveRunState {
@@ -57,19 +54,19 @@ export function App() {
   const [isActivityCollapsed, setIsActivityCollapsed] = useState(false);
   const [isSystemOpen, setIsSystemOpen] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(defaultSidebarOpen);
-  const [inspectorOpen, setInspectorOpen] = useState(defaultInspectorOpen);
   const [selectedLog, setSelectedLog] = useState<DesktopLogDetail | null>(null);
   const [selectedRun, setSelectedRun] = useState<DesktopRunDetail | null>(null);
   const [providerConfig, setProviderConfig] = useState<DesktopProviderConfig | null>(null);
   const [providerDraft, setProviderDraft] = useState<DesktopProviderConfig | null>(null);
   const [providerHealth, setProviderHealth] = useState<DesktopProviderHealth | null>(null);
+  const [isCheckingProvider, setIsCheckingProvider] = useState(false);
   const [verificationDraft, setVerificationDraft] = useState("");
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState<string | null>("Loading");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<"idle" | "saved">("idle");
   const [activeRun, setActiveRun] = useState<ActiveRunState | null>(null);
-  const [runEvents, setRunEvents] = useState<DesktopAgentRunEvent[]>([]);
+  const [isCancellingRun, setIsCancellingRun] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   useEffect(() => {
@@ -80,6 +77,7 @@ export function App() {
         setProviderHealth({
           provider: provider.provider,
           ok: false,
+          status: "unavailable",
           command: provider.command,
           message: "Provider health check failed.",
           details: errorToMessage(error),
@@ -107,12 +105,6 @@ export function App() {
       setVerificationDraft(formatVerificationConfig(await api.getVerificationConfig()));
       setDraft(loaded.artifacts.IDEA);
       setBusy(null);
-    });
-  }, [api]);
-
-  useEffect(() => {
-    return api.onAgentRunEvent((event) => {
-      setRunEvents((current) => [...current.slice(-79), event]);
     });
   }, [api]);
 
@@ -186,9 +178,9 @@ export function App() {
     if (!workspace || !agent) return;
 
     setErrorMessage(null);
+    setIsCancellingRun(false);
     const runLabel = agentButtonLabels[type] ?? "Running agent";
     setBusy(runLabel);
-    setRunEvents([]);
     setActiveRun({
       label: runLabel,
       provider: providerConfig?.provider ?? "mock",
@@ -203,11 +195,15 @@ export function App() {
       setSelectedLog(null);
       setSelectedRun(null);
       setDraft(updated.artifacts[type]);
+      setWorkspaceList(await api.listWorkspaces());
     } catch (error) {
-      setErrorMessage(errorToMessage(error));
+      if (!isRunCancellation(error)) {
+        setErrorMessage(errorToMessage(error));
+      }
       await refreshCurrentWorkspace();
     } finally {
       setActiveRun(null);
+      setIsCancellingRun(false);
       setBusy(null);
     }
   }
@@ -218,8 +214,8 @@ export function App() {
     const previousRunFiles = new Set(workspace.runs.map((run) => run.fileName));
     const previousLogFiles = new Set(workspace.logs.map((log) => log.fileName));
     setErrorMessage(null);
+    setIsCancellingRun(false);
     setBusy("Running Planning");
-    setRunEvents([]);
     setActiveRun({
       label: "Running Planning",
       provider: providerConfig?.provider ?? "mock",
@@ -234,14 +230,19 @@ export function App() {
       setSelectedLog(null);
       setSelectedRun(null);
       setDraft(updated.artifacts.TASKS);
+      setWorkspaceList(await api.listWorkspaces());
     } catch (error) {
-      setErrorMessage(errorToMessage(error));
+      const cancelled = isRunCancellation(error);
+      if (!cancelled) {
+        setErrorMessage(errorToMessage(error));
+      }
       const refreshed = await refreshCurrentWorkspace();
-      if (refreshed) {
+      if (!cancelled && refreshed) {
         await openNewestDiagnostic(refreshed, previousRunFiles, previousLogFiles);
       }
     } finally {
       setActiveRun(null);
+      setIsCancellingRun(false);
       setBusy(null);
     }
   }
@@ -250,8 +251,8 @@ export function App() {
     if (!workspace) return;
 
     setErrorMessage(null);
+    setIsCancellingRun(false);
     setBusy("Running MVP chain");
-    setRunEvents([]);
     setActiveRun({
       label: "Running MVP chain",
       provider: providerConfig?.provider ?? "mock",
@@ -266,12 +267,29 @@ export function App() {
       setSelectedLog(null);
       setSelectedRun(null);
       setDraft(updated.artifacts.EXECUTION);
+      setWorkspaceList(await api.listWorkspaces());
     } catch (error) {
-      setErrorMessage(errorToMessage(error));
+      if (!isRunCancellation(error)) {
+        setErrorMessage(errorToMessage(error));
+      }
       await refreshCurrentWorkspace();
     } finally {
       setActiveRun(null);
+      setIsCancellingRun(false);
       setBusy(null);
+    }
+  }
+
+  async function cancelActiveRun() {
+    if (!activeRun || isCancellingRun) return;
+
+    setIsCancellingRun(true);
+    setBusy("Cancelling run");
+    try {
+      await api.cancelAgentRun();
+    } catch (error) {
+      setErrorMessage(errorToMessage(error));
+      setIsCancellingRun(false);
     }
   }
 
@@ -338,6 +356,67 @@ export function App() {
     }
   }
 
+  async function renameWorkspace(id: string, currentName: string) {
+    const nextName = window.prompt("Project name", currentName)?.trim();
+    if (!nextName || nextName === currentName) return;
+
+    setErrorMessage(null);
+    setBusy("Renaming workspace");
+    try {
+      const updated = await api.renameWorkspace({ id, name: nextName });
+      if (workspace?.id === id) {
+        setWorkspace(updated);
+      }
+      setWorkspaceList(await api.listWorkspaces());
+    } catch (error) {
+      setErrorMessage(errorToMessage(error));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function deleteWorkspace(id: string, name: string) {
+    if (!window.confirm(`Delete "${name}"? This removes the local workspace files.`)) return;
+
+    setErrorMessage(null);
+    setBusy("Deleting workspace");
+    try {
+      const next = await api.deleteWorkspace(id);
+      setWorkspaceList(await api.listWorkspaces());
+
+      if (workspace?.id !== id) {
+        return;
+      }
+
+      if (next) {
+        setWorkspace(next);
+        setSelectedArtifact("IDEA");
+        setViewMode("artifact");
+        setSelectedLog(null);
+        setSelectedRun(null);
+        setDraft(next.artifacts.IDEA);
+        return;
+      }
+
+      const created = await api.createWorkspace({
+        name: "Untitled Product",
+        description: "Local product workspace",
+        idea: "# Idea\n\n",
+      });
+      setWorkspaceList(await api.listWorkspaces());
+      setWorkspace(created);
+      setSelectedArtifact("IDEA");
+      setViewMode("artifact");
+      setSelectedLog(null);
+      setSelectedRun(null);
+      setDraft(created.artifacts.IDEA);
+    } catch (error) {
+      setErrorMessage(errorToMessage(error));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function selectProvider(provider: DesktopProviderKind) {
     const defaults = providerDefaults[provider];
     const next = {
@@ -382,17 +461,48 @@ export function App() {
   async function refreshProviderHealth(config = providerConfig) {
     if (!config) return;
     setProviderHealth(null);
+    setIsCheckingProvider(true);
     try {
       setProviderHealth(await api.checkProviderHealth());
     } catch (error) {
       setProviderHealth({
         provider: config.provider,
         ok: false,
+        status: "unavailable",
         command: config.command,
         message: "Provider health check failed.",
         details: errorToMessage(error),
         checkedAt: new Date().toISOString(),
       });
+    } finally {
+      setIsCheckingProvider(false);
+    }
+  }
+
+  async function checkProviderHealth() {
+    if (!providerDraft) return;
+
+    setErrorMessage(null);
+    setProviderHealth(null);
+    setIsCheckingProvider(true);
+    try {
+      const updated = await api.setProviderConfig(providerDraft);
+      setProviderConfig(updated);
+      setProviderDraft(updated);
+      setProviderHealth(await api.checkProviderHealth());
+    } catch (error) {
+      setProviderHealth({
+        provider: providerDraft.provider,
+        ok: false,
+        status: "unavailable",
+        command: providerDraft.command,
+        message: "Provider health check failed.",
+        details: errorToMessage(error),
+        checkedAt: new Date().toISOString(),
+      });
+      setErrorMessage(errorToMessage(error));
+    } finally {
+      setIsCheckingProvider(false);
     }
   }
 
@@ -479,10 +589,6 @@ export function App() {
     setSidebarOpen((current) => ({ ...current, [section]: !current[section] }));
   }
 
-  function toggleInspectorSection(section: InspectorSectionId) {
-    setInspectorOpen((current) => ({ ...current, [section]: !current[section] }));
-  }
-
   if (busy === "Loading") {
     return (
       <div className="grid min-h-full auto-cols-max grid-flow-col place-content-center items-center gap-2.5 bg-background text-[13px] text-muted-foreground">
@@ -504,7 +610,6 @@ export function App() {
   const currentAgent = agentByArtifact[selectedArtifact];
   const canRunSelected = Boolean(currentAgent);
   const completedCount = workspace.completedStates.length;
-  const runCount = workspace.runs.length;
   const activeProvider = providerConfig?.provider ?? "mock";
 
   return (
@@ -513,24 +618,29 @@ export function App() {
         className={cn(
           "grid h-full min-w-0 bg-background",
           isActivityCollapsed
-            ? "grid-cols-[60px_292px_minmax(420px,1fr)_340px]"
-            : "grid-cols-[188px_292px_minmax(420px,1fr)_340px]",
+            ? "grid-cols-[60px_292px_minmax(420px,1fr)]"
+            : "grid-cols-[188px_292px_minmax(420px,1fr)]",
           "max-[1180px]:grid-cols-[60px_260px_minmax(380px,1fr)] max-[820px]:grid-cols-[52px_minmax(0,1fr)]"
         )}
       >
         <ActivityRail
           activeActivity={activeActivity}
           collapsed={isActivityCollapsed}
+          checkingProvider={isCheckingProvider}
           isSystemOpen={isSystemOpen}
           onSelect={selectActivity}
           onToggleCollapsed={() => setIsActivityCollapsed((current) => !current)}
           onToggleSystem={() => setIsSystemOpen((current) => !current)}
+          provider={activeProvider}
+          providerHealth={providerHealth}
         />
 
         <WorkspaceSidebar
           busy={busy}
           completedCount={completedCount}
           onCreateWorkspace={createBlankWorkspace}
+          onDeleteWorkspace={deleteWorkspace}
+          onRenameWorkspace={renameWorkspace}
           onOpenWorkspace={openWorkspace}
           onRunMvpChain={runMvpChain}
           onRunPlanning={runPlanning}
@@ -547,8 +657,9 @@ export function App() {
           activeActivity={activeActivity}
           busy={busy}
           canRunSelected={canRunSelected}
+          checkingProvider={isCheckingProvider}
           draft={draft}
-          onCheckProvider={() => refreshProviderHealth(providerDraft ?? providerConfig)}
+          onCheckProvider={checkProviderHealth}
           onDraftChange={setDraft}
           onOpenLog={openLog}
           onOpenRun={openRun}
@@ -571,36 +682,23 @@ export function App() {
           workspace={workspace}
         />
 
-        <WorkspaceInspector
-          activeProvider={activeProvider}
-          activeRun={activeRun}
-          elapsedSeconds={elapsedSeconds}
-          inspectorOpen={inspectorOpen}
-          onCheckProvider={() => providerDraft && refreshProviderHealth(providerDraft)}
-          onOpenLog={openLog}
-          onOpenRun={openRun}
-          onProviderChange={selectProvider}
-          onProviderDraftChange={setProviderDraft}
-          onSaveProvider={() => saveProviderConfig()}
-          onSaveVerification={saveVerificationConfig}
-          onSelectArtifact={selectArtifact}
-          onToggleSection={toggleInspectorSection}
-          onVerificationDraftChange={setVerificationDraft}
-          providerDraft={providerDraft}
-          providerHealth={providerHealth}
-          runCount={runCount}
-          runEvents={runEvents}
-          selectedArtifact={selectedArtifact}
-          verificationDraft={verificationDraft}
-          workspace={workspace}
-        />
-
         {busy && busy !== "Loading" && (
           <div className="fixed bottom-4 right-4 inline-flex max-w-[320px] items-center gap-2 rounded-lg border border-foreground/20 bg-foreground px-3 py-2 text-xs text-background shadow-xl">
             <Loader2 className="animate-spin" size={15} />
             <span>
               {activeRun ? `${activeRun.label} · ${activeRun.provider} · ${formatElapsed(elapsedSeconds)}` : busy}
             </span>
+            {activeRun && (
+              <button
+                className="inline-flex h-6 items-center gap-1 rounded-md border border-background/25 px-2 text-[11px] font-semibold transition-colors hover:bg-background/10 disabled:opacity-60"
+                type="button"
+                onClick={cancelActiveRun}
+                disabled={isCancellingRun}
+              >
+                {isCancellingRun ? <Loader2 className="animate-spin" size={12} /> : <StopCircle size={12} />}
+                <span>{isCancellingRun ? "Cancelling" : "Cancel"}</span>
+              </button>
+            )}
           </div>
         )}
 
@@ -613,4 +711,9 @@ export function App() {
       </main>
     </TooltipProvider>
   );
+}
+
+function isRunCancellation(error: unknown): boolean {
+  const message = errorToMessage(error).toLowerCase();
+  return message.includes("cancelled") || message.includes("canceled") || message.includes("abort");
 }
