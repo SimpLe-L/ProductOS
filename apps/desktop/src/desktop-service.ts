@@ -499,6 +499,7 @@ export class DesktopService {
         title: input.title,
         providerConfig,
         error: errorMessage(input.error),
+        recovery: providerRecoveryHints(providerConfig, input.error),
         createdAt: now,
       }),
       "utf8",
@@ -768,6 +769,7 @@ function renderErrorLog(input: {
   title: string;
   providerConfig: DesktopProviderConfig;
   error: string;
+  recovery: string[];
   createdAt: string;
 }): string {
   return `# ${input.title}
@@ -795,7 +797,33 @@ ${input.providerConfig.timeoutMs}ms
 ## Error
 
 ${input.error}
+
+## Recovery
+
+${input.recovery.map((item) => `- ${item}`).join("\n")}
 `;
+}
+
+function providerRecoveryHints(config: DesktopProviderConfig, error: unknown): string[] {
+  const message = errorMessage(error).toLowerCase();
+  const hints = [
+    "Open Settings and run Check for the selected provider.",
+    "Confirm the command and args match the installed local CLI.",
+  ];
+
+  if (config.provider === "codex") {
+    hints.push("For Codex, the default command should be `codex` with args `exec --skip-git-repo-check -`.");
+  }
+
+  if (message.includes("enoent") || message.includes("not found") || message.includes("missing")) {
+    hints.push("The command may not be available on Electron's PATH; use an absolute CLI path if needed.");
+  }
+
+  if (message.includes("timed out") || message.includes("timeout")) {
+    hints.push("Increase the provider timeout or try a smaller Planning Run first.");
+  }
+
+  return hints;
 }
 
 function runTimestamp(iso: string): string {

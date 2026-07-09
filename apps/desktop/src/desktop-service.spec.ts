@@ -400,6 +400,8 @@ describe("DesktopService", () => {
     const detail = await service.readLog(opened.logs[0]!.fileName);
     expect(detail.content).toContain("# Research Agent failed");
     expect(detail.content).toContain("missing-productos-cli-for-agent-run");
+    expect(detail.content).toContain("## Recovery");
+    expect(detail.content).toContain("Open Settings and run Check");
     await expect(service.readLog("../project.json")).rejects.toThrow("Invalid log file name");
   });
 

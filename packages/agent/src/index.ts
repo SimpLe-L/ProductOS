@@ -97,6 +97,12 @@ interface PlanningParseResult {
   missingFiles: string[];
 }
 
+const languageInstruction = `Language rule:
+
+- Write the generated artifact in the same primary language as the input artifacts.
+- If the idea or source artifacts are primarily Chinese, write the artifact in Chinese.
+- Keep file boundary comments and Markdown headings exactly in the required structural format.`;
+
 export const researchAgent: ProductAgentDefinition = {
   name: "Research Agent",
   inputArtifacts: ["IDEA"],
@@ -104,6 +110,8 @@ export const researchAgent: ProductAgentDefinition = {
   prompt: (artifacts) => `You are the Research Agent for OpenFounder.
 
 Read the product idea and produce a durable market research artifact.
+
+${languageInstruction}
 
 The output must be Markdown and include:
 
@@ -124,6 +132,8 @@ function planningPrompt(artifacts: Record<string, string>, knowledge: Record<str
 OpenFounder is a local-first product operating system. The workspace files are the source of truth.
 
 Read the current workspace context and produce a complete planning pass in one response. Update the core planning artifacts through tasks.md. Keep each artifact human-readable Markdown.
+
+${languageInstruction}
 
 Return ONLY the artifact sections below. Use the exact file boundary comments. Do not add prose outside the boundaries.
 
@@ -216,6 +226,8 @@ export const competitorAgent: ProductAgentDefinition = {
 
 Read the product idea and produce a durable competitor analysis artifact.
 
+${languageInstruction}
+
 The output must be Markdown and include:
 
 - main competitor categories
@@ -236,6 +248,8 @@ export const visionAgent: ProductAgentDefinition = {
   prompt: (artifacts) => `You are the Vision Agent for OpenFounder.
 
 Read the market research and competitor analysis, then produce a durable product vision artifact.
+
+${languageInstruction}
 
 The output must be Markdown and include:
 
@@ -263,6 +277,8 @@ export const roadmapAgent: ProductAgentDefinition = {
 
 Read the product vision and produce a durable roadmap artifact.
 
+${languageInstruction}
+
 The output must be Markdown and include:
 
 - MVP scope
@@ -283,6 +299,8 @@ export const prdAgent: ProductAgentDefinition = {
   prompt: (artifacts) => `You are the PRD Agent for OpenFounder.
 
 Read the product vision and roadmap, then produce a durable product requirements document.
+
+${languageInstruction}
 
 The output must be Markdown and include:
 
@@ -313,6 +331,8 @@ export const taskAgent: ProductAgentDefinition = {
 
 Read the PRD and produce a durable implementation task breakdown.
 
+${languageInstruction}
+
 The output must be Markdown and include:
 
 - frontend tasks
@@ -335,6 +355,8 @@ export const techDesignAgent: ProductAgentDefinition = {
   prompt: (artifacts) => `You are the Tech Design Agent for OpenFounder.
 
 Read the PRD and implementation task breakdown, then produce a durable technical design artifact.
+
+${languageInstruction}
 
 The output must be Markdown and include:
 
@@ -363,6 +385,8 @@ export const implementationAgent: ProductAgentDefinition = {
 
 Read the technical design and produce a durable coding-stage implementation artifact.
 
+${languageInstruction}
+
 The output must be Markdown and include:
 
 - implementation summary
@@ -389,6 +413,8 @@ export const codeExecutionAgent: ProductAgentDefinition = {
 You are running inside the selected workspace directory.
 
 Read the implementation handoff, make the smallest useful code or file changes needed, and produce a durable execution report.
+
+${languageInstruction}
 
 The output must be Markdown and include:
 

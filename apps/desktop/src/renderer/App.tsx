@@ -36,6 +36,11 @@ import {
 import { createBrowserPreviewApi } from "./browser-preview-api.js";
 import { ActivityBar as ActivityRail } from "./components/activity-bar.js";
 import { CenterPane } from "./components/center-pane.js";
+import {
+  DeleteProjectDialog,
+  ExecutionConfirmDialog,
+  ProjectNameDialog,
+} from "./components/workspace-dialogs.js";
 import { WorkspaceSidebar } from "./components/workspace-sidebar.js";
 
 interface ActiveRunState {
@@ -43,6 +48,13 @@ interface ActiveRunState {
   provider: DesktopProviderKind;
   startedAt: number;
 }
+
+type ProjectDialogState =
+  | { kind: "rename"; id: string; name: string }
+  | { kind: "delete"; id: string; name: string }
+  | null;
+
+type ExecutionDialogState = "execution" | "chain" | null;
 
 export function App() {
   const api: DesktopApi = useMemo(() => window.openFounder ?? createBrowserPreviewApi(), []);
@@ -67,6 +79,8 @@ export function App() {
   const [saveState, setSaveState] = useState<"idle" | "saved">("idle");
   const [activeRun, setActiveRun] = useState<ActiveRunState | null>(null);
   const [isCancellingRun, setIsCancellingRun] = useState(false);
+  const [projectDialog, setProjectDialog] = useState<ProjectDialogState>(null);
+  const [executionDialog, setExecutionDialog] = useState<ExecutionDialogState>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   useEffect(() => {
@@ -176,9 +190,15 @@ export function App() {
   async function runAgent(type: MvpArtifactType) {
     const agent = agentByArtifact[type];
     if (!workspace || !agent) return;
+    if (type === "EXECUTION" && executionDialog !== "execution") {
+      setExecutionDialog("execution");
+      return;
+    }
 
     setErrorMessage(null);
     setIsCancellingRun(false);
+    setExecutionDialog(null);
+    if (!(await ensureProviderReady())) return;
     const runLabel = agentButtonLabels[type] ?? "Running agent";
     setBusy(runLabel);
     setActiveRun({
@@ -215,6 +235,7 @@ export function App() {
     const previousLogFiles = new Set(workspace.logs.map((log) => log.fileName));
     setErrorMessage(null);
     setIsCancellingRun(false);
+    if (!(await ensureProviderReady())) return;
     setBusy("Running Planning");
     setActiveRun({
       label: "Running Planning",
@@ -249,9 +270,15 @@ export function App() {
 
   async function runMvpChain() {
     if (!workspace) return;
+    if (executionDialog !== "chain") {
+      setExecutionDialog("chain");
+      return;
+    }
 
     setErrorMessage(null);
     setIsCancellingRun(false);
+    setExecutionDialog(null);
+    if (!(await ensureProviderReady())) return;
     setBusy("Running MVP chain");
     setActiveRun({
       label: "Running MVP chain",
@@ -357,17 +384,27 @@ export function App() {
   }
 
   async function renameWorkspace(id: string, currentName: string) {
-    const nextName = window.prompt("Project name", currentName)?.trim();
-    if (!nextName || nextName === currentName) return;
+    setProjectDialog({ kind: "rename", id, name: currentName });
+  }
+
+  async function submitWorkspaceRename(nextName: string) {
+    if (projectDialog?.kind !== "rename") return;
+    const { id, name: currentName } = projectDialog;
+    const trimmed = nextName.trim();
+    if (!trimmed || trimmed === currentName) {
+      setProjectDialog(null);
+      return;
+    }
 
     setErrorMessage(null);
     setBusy("Renaming workspace");
     try {
-      const updated = await api.renameWorkspace({ id, name: nextName });
+      const updated = await api.renameWorkspace({ id, name: trimmed });
       if (workspace?.id === id) {
         setWorkspace(updated);
       }
       setWorkspaceList(await api.listWorkspaces());
+      setProjectDialog(null);
     } catch (error) {
       setErrorMessage(errorToMessage(error));
     } finally {
@@ -376,13 +413,19 @@ export function App() {
   }
 
   async function deleteWorkspace(id: string, name: string) {
-    if (!window.confirm(`Delete "${name}"? This removes the local workspace files.`)) return;
+    setProjectDialog({ kind: "delete", id, name });
+  }
+
+  async function confirmWorkspaceDelete() {
+    if (projectDialog?.kind !== "delete") return;
+    const { id } = projectDialog;
 
     setErrorMessage(null);
     setBusy("Deleting workspace");
     try {
       const next = await api.deleteWorkspace(id);
       setWorkspaceList(await api.listWorkspaces());
+      setProjectDialog(null);
 
       if (workspace?.id !== id) {
         return;
@@ -427,6 +470,31 @@ export function App() {
     };
     setProviderDraft(next);
     await saveProviderConfig(next);
+  }
+
+  async function ensureProviderReady(): Promise<boolean> {
+    const config = providerConfig ?? providerDraft;
+    if (!config || config.provider === "mock") return true;
+
+    setProviderHealth(null);
+    setIsCheckingProvider(true);
+    try {
+      const health = await api.checkProviderHealth();
+      setProviderHealth(health);
+      if (health.ok && health.status === "ready") return true;
+
+      setActiveActivity("settings");
+      setViewMode("settings");
+      setErrorMessage(`${health.message} Open Settings, fix the provider, then run Check again.`);
+      return false;
+    } catch (error) {
+      setActiveActivity("settings");
+      setViewMode("settings");
+      setErrorMessage(errorToMessage(error));
+      return false;
+    } finally {
+      setIsCheckingProvider(false);
+    }
   }
 
   async function saveProviderConfig(input = providerDraft) {
@@ -707,6 +775,39 @@ export function App() {
             <strong className="mr-2 text-destructive">Error</strong>
             <span>{errorMessage}</span>
           </div>
+        )}
+
+        {projectDialog?.kind === "rename" && (
+          <ProjectNameDialog
+            busy={Boolean(busy)}
+            initialName={projectDialog.name}
+            onClose={() => setProjectDialog(null)}
+            onSubmit={submitWorkspaceRename}
+          />
+        )}
+
+        {projectDialog?.kind === "delete" && (
+          <DeleteProjectDialog
+            busy={Boolean(busy)}
+            projectName={projectDialog.name}
+            onClose={() => setProjectDialog(null)}
+            onConfirm={confirmWorkspaceDelete}
+          />
+        )}
+
+        {executionDialog && (
+          <ExecutionConfirmDialog
+            busy={Boolean(busy)}
+            mode={executionDialog}
+            onClose={() => setExecutionDialog(null)}
+            onConfirm={() => {
+              if (executionDialog === "chain") {
+                void runMvpChain();
+              } else {
+                void runAgent("EXECUTION");
+              }
+            }}
+          />
         )}
       </main>
     </TooltipProvider>

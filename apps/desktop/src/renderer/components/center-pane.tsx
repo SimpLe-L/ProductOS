@@ -22,6 +22,7 @@ import {
   type CenterMode,
 } from "../app-config.js";
 import { ProviderSettingsPanel } from "./provider-settings-panel.js";
+import { RunDetailView } from "./run-detail-view.js";
 import { RunList } from "./run-list.js";
 
 export function CenterPane({
@@ -220,13 +221,7 @@ function CenterContent({
   }
 
   if (viewMode === "run" && selectedRun) {
-    return (
-      <ScrollArea className="min-h-0 border-t border-border bg-card/55">
-        <pre className="whitespace-pre-wrap px-7 py-6 font-mono text-sm leading-relaxed text-foreground max-[820px]:px-4 max-[820px]:py-4">
-          {selectedRun.content}
-        </pre>
-      </ScrollArea>
-    );
+    return <RunDetailView run={selectedRun} />;
   }
 
   if (viewMode === "inbox") {
